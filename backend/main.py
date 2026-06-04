@@ -1,13 +1,37 @@
 import os
 from collections.abc import AsyncIterable
+from contextlib import asynccontextmanager
 from time import sleep
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.responses import FileResponse
 from fastapi.sse import EventSourceResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-app = FastAPI()
+from backend.config import settings
+from backend.db import get_db, init_db
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    yield
+
+
+app = FastAPI(title=settings.app_name, lifespan=lifespan)
+
+
+@app.get("/api/health")
+async def backend_health():
+    return {"app": settings.app_name, "status": "ok"}
+
+
+@app.get("/api/health/db")
+async def db_health(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(text("SELECT 1"))
+    return {"db": result.scalar_one()}
 
 
 @app.get("/api/data")

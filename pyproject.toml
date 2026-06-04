@@ -5,8 +5,11 @@ description = "A production-grade multi-agent research system built with Google 
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "asyncpg>=0.31.0",
     "fastapi[standard-no-fastapi-cloud-cli]>=0.136.3",
+    "pgvector>=0.4.2",
+    "sqlalchemy>=2.0.50",
 ]
 
 [tool.fastapi]
-entrypoint = "main:app"
+entrypoint = "backend.main:app"
