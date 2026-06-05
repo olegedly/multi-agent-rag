@@ -42,8 +42,9 @@ jobs:
 
       - name: Trigger Deployment Webhook
         uses: distributhor/workflow-webhook@v3
-        env:
+        with:
           webhook_url: ${{ secrets.WEBHOOK_URL }}
-          webhook_secret: ${{ secrets.WEBHOOK_SECRET }}
+          webhook_auth: ${{ secrets.WEBHOOK_SECRET }}
+          webhook_auth_type: bearer
           data: '{ "ref": "${{ github.ref }}", "sha": "${{ github.sha }}" }'
           verify_ssl: false
