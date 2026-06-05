@@ -40,30 +40,9 @@ jobs:
           push: true
           tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/multi-agent-rag-fe:latest
 
-      - name: Debug Raw Request
-        run: |
-          # Create a test endpoint that echoes headers (use httpbin or similar)
-          # But since we can't, let's see what curl actually sends
-
-          set -x  # This will show the exact command being executed
-
-          curl -v -X POST "$WEBHOOK_URL" \
-            -H "Authorization: Bearer $WEBHOOK_SECRET" \
-            -H "Content-Type: application/json" \
-            -d '{"ref": "test", "sha": "test"}' 2>&1 | tee /tmp/curl_output
-
-          set +x
-
-          # Check if the Authorization header looks correct
-          echo "=== Authorization Header Check ==="
-          grep -i "authorization:" /tmp/curl_output
-        env:
-          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
-
       - name: Trigger Deployment Webhook
         run: |
           curl -X POST "${{ secrets.WEBHOOK_URL }}" \
             -H "Authorization: Bearer ${{ secrets.WEBHOOK_SECRET }}" \
             -H "Content-Type: application/json" \
-            -d '{\"ref\": \"${{ github.ref }}\", \"sha\": \"${{ github.sha }}\"}'
+            -d '{"ref": "${{ github.ref }}", "sha": "${{ github.sha }}"}'
