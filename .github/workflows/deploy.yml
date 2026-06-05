@@ -40,6 +40,20 @@ jobs:
           push: true
           tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/multi-agent-rag-fe:latest
 
+      - name: Inspect what GitHub actually sends
+        shell: bash
+        env:
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+        run: |
+          set -euo pipefail
+          CLEAN_SECRET="$(printf '%s' "$WEBHOOK_SECRET" | tr -d '\r\n')"
+
+          curl --silent --show-error \
+            --request POST "https://webhook.site/5a0644af-67aa-465b-8357-0a2cc9c2f3a1" \
+            --header "Authorization: Bearer $CLEAN_SECRET" \
+            --header "Content-Type: application/json" \
+            --data '{"test":"github-actions"}'
+
       - name: Trigger Deployment Webhook
         shell: bash
         env:
