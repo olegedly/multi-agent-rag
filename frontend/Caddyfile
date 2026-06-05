@@ -1,5 +1,4 @@
 :80 {
-    root * /usr/share/caddy/html
     encode zstd gzip
 
     # Security headers (TLS/HSTS handled by Coolify's edge proxy)
@@ -10,22 +9,31 @@
         -Server
     }
 
-    # Hashed assets (Vite/SolidJS: assets/*-<hash>.{js,css}) — cache 1 year, immutable
-    @assets {
-        path *.js *.mjs *.css *.svg *.png *.jpg *.jpeg *.gif *.ico *.webp *.avif *.woff *.woff2
+    # API routes — proxy to backend for everything under /api/
+    @api {
+        path_regexp ^/api/
     }
-    header @assets Cache-Control "public, max-age=31536000, immutable"
-
-    # HTML — short cache so browsers pick up new asset references quickly
-    @html {
-        path *.html
+    handle @api {
+        reverse_proxy backend:8000
     }
-    header @html Cache-Control "public, max-age=0, must-revalidate"
 
-    # SPA fallback — serve index.html for client-side routes
-    try_files {path} /index.html
-    file_server
+    # Static files with SPA fallback
+    handle {
+        root * /usr/share/caddy/html
 
-    # Reverse-proxy API requests to FastAPI backend
-    reverse_proxy /api/** backend:8000
+        # Hashed assets — cache 1 year, immutable
+        @assets {
+            path *.js *.mjs *.css *.svg *.png *.jpg *.jpeg *.gif *.ico *.webp *.avif *.woff *.woff2
+        }
+        header @assets Cache-Control "public, max-age=31536000, immutable"
+
+        # HTML — short cache
+        @html {
+            path *.html
+        }
+        header @html Cache-Control "public, max-age=0, must-revalidate"
+
+        try_files {path} /index.html
+        file_server
+    }
 }
