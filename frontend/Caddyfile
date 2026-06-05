@@ -27,5 +27,5 @@
     file_server
 
     # Reverse-proxy API requests to FastAPI backend
-    reverse_proxy /api/* backend:8000
+    reverse_proxy /api/** backend:8000
 }
