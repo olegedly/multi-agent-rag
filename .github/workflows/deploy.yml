@@ -66,4 +66,4 @@ jobs:
           curl -X POST "${{ secrets.WEBHOOK_URL }}" \
             -H "Authorization: Bearer ${{ secrets.WEBHOOK_SECRET }}" \
             -H "Content-Type: application/json" \
-            -d "{\"ref\": \"${{ github.ref }}\", \"sha\": \"${{ github.sha }}\"}"
+            -d '{\"ref\": \"${{ github.ref }}\", \"sha\": \"${{ github.sha }}\"}'
