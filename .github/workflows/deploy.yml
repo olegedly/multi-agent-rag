@@ -46,3 +46,4 @@ jobs:
           webhook_url: ${{ secrets.WEBHOOK_URL }}
           webhook_secret: ${{ secrets.WEBHOOK_SECRET }}
           data: '{ "ref": "${{ github.ref }}", "sha": "${{ github.sha }}" }'
+          verify_ssl: false
