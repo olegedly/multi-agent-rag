@@ -1,6 +1,6 @@
 :80 {
     root * /usr/share/caddy/html
-    encode zstd brotli gzip
+    encode zstd gzip
 
     # Security headers (TLS/HSTS handled by Coolify's edge proxy)
     header {
