@@ -9,13 +9,13 @@ services:
 
   caddy:
     profiles: ["production"]
-    image: caddy:2
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./frontend/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./frontend/dist:/usr/share/caddy/html:ro
       - caddy_data:/data
 
 volumes:
