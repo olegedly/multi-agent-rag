@@ -42,17 +42,7 @@ jobs:
 
       - name: Trigger Deployment Webhook
         run: |
-          echo "=== Debug Information ==="
-          echo "WEBHOOK_URL is set: ${{ secrets.WEBHOOK_URL != '' }}"
-          echo "WEBHOOK_SECRET is set: ${{ secrets.WEBHOOK_SECRET != '' }}"
-          echo "First 10 chars of WEBHOOK_URL: ${WEBHOOK_URL:0:10}..."
-          echo "First 10 chars of WEBHOOK_SECRET: ${WEBHOOK_SECRET:0:10}..."
-          echo ""
-          echo "=== Testing Connectivity ==="
-          curl -X POST ${{ secrets.WEBHOOK_URL }} \
+          curl -X POST "${{ secrets.WEBHOOK_URL }}" \
             -H "Authorization: Bearer ${{ secrets.WEBHOOK_SECRET }}" \
             -H "Content-Type: application/json" \
-            -d '{
-              "ref": "${{ github.ref }}",
-              "sha": "${{ github.sha }}"
-            }'
+            -d "{\"ref\": \"${{ github.ref }}\", \"sha\": \"${{ github.sha }}\"}"
