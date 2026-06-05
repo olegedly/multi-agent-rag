@@ -41,8 +41,15 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/multi-agent-rag-fe:latest
 
       - name: Trigger Deployment Webhook
+        shell: bash
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
         run: |
-          curl -X POST "${{ secrets.WEBHOOK_URL }}" \
-            -H "Authorization: Bearer ${{ secrets.WEBHOOK_SECRET }}" \
-            -H "Content-Type: application/json" \
-            -d '{"ref": "${{ github.ref }}", "sha": "${{ github.sha }}"}'
+          set -euo pipefail
+
+          CLEAN_SECRET="$(printf '%s' "$WEBHOOK_SECRET" | tr -d '\r\n')"
+
+          curl --fail --show-error --silent \
+            --request GET "$WEBHOOK_URL" \
+            --header "Authorization: Bearer $CLEAN_SECRET"
