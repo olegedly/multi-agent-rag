@@ -1,14 +1,12 @@
-your-domain.com {
+:80 {
     root * /usr/share/caddy/html
     encode zstd brotli gzip
 
-    # Security headers
+    # Security headers (TLS/HSTS handled by Coolify's edge proxy)
     header {
-        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
         X-Content-Type-Options nosniff
         X-Frame-Options DENY
         Referrer-Policy strict-origin-when-cross-origin
-        X-XSS-Protection "0" # modern browsers disable this; CSP is the real defence
         -Server
     }
 
