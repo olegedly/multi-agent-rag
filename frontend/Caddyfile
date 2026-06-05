@@ -24,6 +24,7 @@
 
     # SPA fallback — serve index.html for client-side routes
     try_files {path} /index.html
+    file_server
 
     # Reverse-proxy API requests to FastAPI backend
     reverse_proxy /api/* backend:8000
