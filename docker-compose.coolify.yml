@@ -1,10 +1,12 @@
 services:
   backend:
     image: "ghcr.io/olegedly/multi-agent-rag-be:latest"
+    pull_policy: always
     expose:
       - "8000"
   frontend:
     image: "ghcr.io/olegedly/multi-agent-rag-fe:latest"
+    pull_policy: always
     expose:
       - "80"
     volumes:
