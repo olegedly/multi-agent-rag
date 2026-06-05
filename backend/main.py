@@ -33,9 +33,7 @@ async def db_health(db: AsyncSession = Depends(get_db)):
 
 @app.get("/api/data")
 async def root():
-    return {
-        "message": "Hello World! Backend change test. And again, see if pull policy always made it better"
-    }
+    return {"message": "Hello World!"}
 
 
 test_text: str = "A production-grade multi-agent research system built with Google ADK, MCP, and pgvector. Three specialist AI agents (Researcher, Critic, Synthesizer) collaborate via the Model Context Protocol to answer questions about MCP and ADK documentation — cited, grounded, and streamed live to a SolidJS dashboard."
