@@ -41,10 +41,11 @@ jobs:
           tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/multi-agent-rag-fe:latest
 
       - name: Trigger Deployment Webhook
-        uses: distributhor/workflow-webhook@v3
-        with:
-          webhook_url: ${{ secrets.WEBHOOK_URL }}
-          webhook_auth: ${{ secrets.WEBHOOK_SECRET }}
-          webhook_auth_type: bearer
-          data: '{ "ref": "${{ github.ref }}", "sha": "${{ github.sha }}" }'
-          verify_ssl: false
+        run: |
+          curl -X POST ${{ secrets.WEBHOOK_URL }} \
+            -H "Authorization: Bearer ${{ secrets.WEBHOOK_SECRET }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "ref": "${{ github.ref }}",
+              "sha": "${{ github.sha }}"
+            }'
