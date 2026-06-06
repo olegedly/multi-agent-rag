@@ -31,10 +31,9 @@ async def get_db(
         yield session
 
 
-async def init_db(
-    sessionmaker: async_sessionmaker[AsyncSession],
-) -> None:
+async def init_db(database_url: str) -> None:
     """Initialize the database: create the pgvector extension."""
-    async with sessionmaker() as session:
-        async with session.bind.begin() as conn:  # type: ignore[union-attr]
-            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    engine = create_async_engine(database_url)
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+    await engine.dispose()

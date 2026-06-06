@@ -8,21 +8,13 @@ libraries needed outside the concrete client tests.
 import json
 from typing import AsyncIterable
 
+import httpx
+
 from backend.llm.protocol import LLMClient, LLMResponse, Message, Usage
+from backend.llm.transport import Transport
 
 
-class FakeResponse:
-    """Duck-typed httpx.Response for tests."""
-
-    def __init__(self, status_code: int, _body: bytes):
-        self.status_code = status_code
-        self.__body = _body
-
-    def json(self):
-        return json.loads(self.__body)
-
-
-class FakeTransport:
+class FakeTransport(Transport):
     """A fake HTTP transport for testing LLM clients.
 
     Pre-records response bodies (plain for non-streaming, chunk-lists for
@@ -54,13 +46,13 @@ class FakeTransport:
 
     async def send(
         self, url: str, headers: dict, json_body: dict
-    ) -> FakeResponse:
+    ) -> httpx.Response:
         self.sent_requests.append((url, headers, json_body))
         if self.status >= 400:
             from backend.llm.protocol import LLMError
 
             raise LLMError(status=self.status, message="API error", details=self._body.decode())
-        return FakeResponse(status_code=self.status, _body=self._body)
+        return httpx.Response(status_code=self.status, content=self._body)
 
     async def send_stream(self, url: str, headers: dict, json_body: dict):
         self.sent_requests.append((url, headers, json_body))

@@ -6,11 +6,25 @@ can focus on protocol-specific request/response parsing.
 """
 
 import json
-from typing import AsyncIterable
+from typing import AsyncIterable, Protocol, runtime_checkable
 
 import httpx
 
 from backend.llm.protocol import LLMError
+
+
+@runtime_checkable
+class Transport(Protocol):
+    """Protocol that both ``HttpTransport`` and ``FakeTransport`` satisfy."""
+
+    async def send(self, url: str, headers: dict, json_body: dict) -> httpx.Response:
+        ...
+
+    async def send_stream(self, url: str, headers: dict, json_body: dict) -> AsyncIterable[str]:
+        ...
+
+    async def close(self) -> None:
+        ...
 
 
 def _parse_error_body(body: bytes) -> str:

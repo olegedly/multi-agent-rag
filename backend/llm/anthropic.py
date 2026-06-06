@@ -4,7 +4,7 @@ import json
 from typing import AsyncIterable
 
 from backend.llm.protocol import LLMClient, LLMResponse, Message, Usage
-from backend.llm.transport import HttpTransport
+from backend.llm.transport import HttpTransport, Transport
 
 
 class AnthropicClient(LLMClient):
@@ -17,7 +17,7 @@ class AnthropicClient(LLMClient):
         api_key: str,
         max_tokens: int = 4096,
         timeout: float = 120.0,
-        transport: HttpTransport | None = None,
+        transport: Transport | None = None,
     ):
         self.model = model
         self.base_url = base_url.rstrip("/")

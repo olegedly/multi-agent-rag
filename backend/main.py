@@ -16,7 +16,7 @@ from backend.config import Settings, get_settings
 from backend.llm.adk_adapter import AdkLlmAdapter
 from backend.llm.factory import create_llm_client
 from backend.llm.protocol import LLMClient
-from backend.llm.transport import HttpTransport
+from backend.llm.transport import HttpTransport, Transport
 
 
 def create_app(
