@@ -41,6 +41,15 @@ export function ChatView(props: ChatViewProps) {
     wasLoading = loading;
   });
 
+  // Auto-grow textarea height as content grows, capped by max-h with scroll
+  createEffect(() => {
+    input(); // react to input changes
+    const ta = textareaRef;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = Math.min(ta.scrollHeight, 180) + "px";
+  });
+
   createEffect(() => {
     // Scroll to bottom whenever messages change
     props.messages();
@@ -117,6 +126,17 @@ export function ChatView(props: ChatViewProps) {
           </div>
         </Show>
 
+        {/* Typing indicator — shown when loading but no assistant message yet */}
+        <Show when={props.isLoading && props.messages().length > 0 && props.messages()[props.messages().length - 1].role === "user"}>
+          <div class="flex justify-start">
+            <div class="max-w-[80%] rounded-2xl px-4 py-3 bg-(--bg-assistant-bubble) border border-(--border) rounded-bl-md">
+              <div class="ellipsis-indicator text-(--text-secondary)">
+                <span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>
+              </div>
+            </div>
+          </div>
+        </Show>
+
         <div ref={messagesEndRef} />
       </div>
 
@@ -135,7 +155,7 @@ export function ChatView(props: ChatViewProps) {
               }
             }}
             placeholder="Type your message..."
-            class="flex-1 resize-none rounded-xl px-4 py-2 text-sm bg-(--bg-chat-input) text-(--text-primary) border border-(--border) focus:outline-none focus:border-(--accent) transition-colors placeholder:text-(--text-secondary) disabled:opacity-50"
+            class="flex-1 resize-none rounded-xl px-4 py-2 text-sm bg-(--bg-chat-input) text-(--text-primary) border border-(--border) focus:outline-none focus:border-(--accent) transition-colors placeholder:text-(--text-secondary) disabled:opacity-50 max-h-[180px] overflow-y-auto"
             rows={1}
           />
           <Show
