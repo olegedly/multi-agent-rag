@@ -145,12 +145,13 @@ class TestGenerateStream:
         )
 
         deltas = []
-        async for chunk in client.generate_stream(
+        async for chunk, _ in client.generate_stream(
             messages=[Message(role="user", content="hi")]
         ):
             deltas.append(chunk)
 
-        assert deltas == ["Hello", " world"]
+        # The usage-only event yields ("", usage), adding an empty string
+        assert deltas == ["Hello", " world", ""]
 
     async def test_records_usage_from_final_event(self) -> None:
         transport = FakeTransport.with_stream(["\n".join(self.SSE_EVENTS)])
@@ -159,14 +160,16 @@ class TestGenerateStream:
             transport=transport,
         )
 
-        async for _ in client.generate_stream(
+        last_usage = None
+        async for _, usage in client.generate_stream(
             messages=[Message(role="user", content="hi")]
         ):
-            pass
+            if usage is not None:
+                last_usage = usage
 
-        assert client.last_usage is not None
-        assert client.last_usage.input_tokens == 3
-        assert client.last_usage.output_tokens == 2
+        assert last_usage is not None
+        assert last_usage.input_tokens == 3
+        assert last_usage.output_tokens == 2
 
     async def test_raises_llm_error_on_4xx(self) -> None:
         transport = FakeTransport.with_error(
@@ -179,7 +182,7 @@ class TestGenerateStream:
         )
 
         with pytest.raises(LLMError) as excinfo:
-            async for _ in client.generate_stream(
+            async for _, _ in client.generate_stream(
                 messages=[Message(role="user", content="hi")]
             ):
                 pass
@@ -193,7 +196,7 @@ class TestGenerateStream:
         )
 
         deltas = []
-        async for chunk in client.generate_stream(
+        async for chunk, _ in client.generate_stream(
             messages=[Message(role="user", content="hi")]
         ):
             deltas.append(chunk)

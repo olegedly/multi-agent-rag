@@ -106,7 +106,12 @@ class AdkLlmAdapter(BaseLlm):
 
         if stream:
             full_text = ""
-            async for delta in self._client.generate_stream(messages, system=system):
+            accumulated_usage: Usage | None = None
+            async for delta, usage in self._client.generate_stream(messages, system=system):
+                if usage is not None:
+                    accumulated_usage = usage
+                if not delta:
+                    continue  # skip usage-only events without text
                 full_text += delta
                 yield LlmResponse(
                     content=types.Content(
@@ -115,7 +120,7 @@ class AdkLlmAdapter(BaseLlm):
                     ),
                     partial=True,
                 )
-            usage_adk = _usage_to_adk(self._client.last_usage)
+            usage_adk = _usage_to_adk(accumulated_usage)
             yield LlmResponse(
                 content=types.Content(
                     role="model",

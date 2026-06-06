@@ -24,7 +24,6 @@ class AnthropicClient(LLMClient):
         self.api_key = api_key
         self.max_tokens = max_tokens
         self._transport = transport or HttpTransport(timeout=timeout)
-        self.last_usage: Usage | None = None
 
     async def generate(
         self,
@@ -58,7 +57,7 @@ class AnthropicClient(LLMClient):
         messages: list[Message],
         system: str | None = None,
         **kwargs,
-    ) -> AsyncIterable[str]:
+    ) -> AsyncIterable[tuple[str, Usage | None]]:
         body = self._build_body(messages, system, stream=True)
         buffer = ""
         async for chunk in self._transport.send_stream(
@@ -70,16 +69,14 @@ class AnthropicClient(LLMClient):
             while "\n\n" in buffer:
                 event_block, buffer = buffer.split("\n\n", 1)
                 deltas, usage = self._parse_sse_event(event_block)
-                if usage:
-                    self.last_usage = usage
                 for delta in deltas:
-                    yield delta
+                    yield delta, usage
+                if not deltas and usage is not None:
+                    yield "", usage
         if buffer.strip():
             deltas, usage = self._parse_sse_event(buffer)
-            if usage:
-                self.last_usage = usage
             for delta in deltas:
-                yield delta
+                yield delta, usage
 
     def _headers(self) -> dict:
         return {
