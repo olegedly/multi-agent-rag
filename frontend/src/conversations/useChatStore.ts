@@ -77,8 +77,14 @@ export function useChatStore() {
     chat.sendMessage(text);
   };
 
-  // beforeunload safety net
+  // Load current conversation's messages into chat on initial mount
   onMount(() => {
+    const initialMsgs = store.getCurrentMessages();
+    if (initialMsgs.length > 0) {
+      chat.setMessages(initialMsgs);
+    }
+
+    // beforeunload safety net
     const handleBeforeUnload = () => {
       const msgs = chat.messages();
       if (msgs.length > 0) {
