@@ -12,7 +12,9 @@ interface ChatViewProps {
 }
 
 function isDesktop(): boolean {
-  return !("ontouchstart" in window) && window.matchMedia("(pointer: fine)").matches;
+  return (
+    !("ontouchstart" in window) && window.matchMedia("(pointer: fine)").matches
+  );
 }
 
 export function ChatView(props: ChatViewProps) {
@@ -39,6 +41,15 @@ export function ChatView(props: ChatViewProps) {
       });
     }
     wasLoading = loading;
+  });
+
+  // Auto-grow textarea height as content grows, capped by max-h with scroll
+  createEffect(() => {
+    input(); // react to input changes
+    const ta = textareaRef;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = Math.min(ta.scrollHeight, 180) + "px";
   });
 
   createEffect(() => {
@@ -68,7 +79,12 @@ export function ChatView(props: ChatViewProps) {
             onClick={props.onDismissStorageError}
             class="ml-2 p-1 hover:bg-red-800 rounded transition-colors cursor-pointer"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              class="h-4 w-4"
+              viewBox="0 0 20 20"
+              fill="currentColor"
+            >
               <path
                 fill-rule="evenodd"
                 d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
@@ -100,7 +116,9 @@ export function ChatView(props: ChatViewProps) {
                   {(part) => (
                     <>
                       {part.type === "text" && (
-                        <p class="text-sm whitespace-pre-wrap">{part.content}</p>
+                        <p class="text-sm whitespace-pre-wrap">
+                          {part.content}
+                        </p>
                       )}
                     </>
                   )}
@@ -114,6 +132,25 @@ export function ChatView(props: ChatViewProps) {
         <Show when={props.error}>
           <div class="bg-red-900/30 border border-red-500/50 text-red-300 px-4 py-3 rounded-lg text-sm">
             {props.error}
+          </div>
+        </Show>
+
+        {/* Typing indicator — shown when loading but no assistant message yet */}
+        <Show
+          when={
+            props.isLoading &&
+            props.messages().length > 0 &&
+            props.messages()[props.messages().length - 1].role === "user"
+          }
+        >
+          <div class="flex justify-start">
+            <div class="max-w-[80%] rounded-2xl px-4 py-3 bg-(--bg-assistant-bubble) border border-(--border) rounded-bl-md">
+              <div class="ellipsis-indicator text-(--text-secondary)">
+                <span class="dot">.</span>
+                <span class="dot">.</span>
+                <span class="dot">.</span>
+              </div>
+            </div>
           </div>
         </Show>
 
@@ -135,7 +172,7 @@ export function ChatView(props: ChatViewProps) {
               }
             }}
             placeholder="Type your message..."
-            class="flex-1 resize-none rounded-xl px-4 py-2 text-sm bg-(--bg-chat-input) text-(--text-primary) border border-(--border) focus:outline-none focus:border-(--accent) transition-colors placeholder:text-(--text-secondary) disabled:opacity-50"
+            class="flex-1 resize-none rounded-xl px-4 py-2 text-sm bg-(--bg-chat-input) text-(--text-primary) border border-(--border) focus:outline-none focus:border-(--accent) transition-colors placeholder:text-(--text-secondary) disabled:opacity-50 max-h-45 overflow-y-auto"
             rows={1}
           />
           <Show
