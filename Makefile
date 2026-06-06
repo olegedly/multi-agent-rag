@@ -1,10 +1,10 @@
 .PHONY: test test-quick dev
 
 test:  ## Install test deps and run the full test suite
-	uv sync --extra test && uv run pytest
+	uv sync --extra test && uv run pytest && cd frontend && bun install --frozen-lockfile && bunx vitest run
 
 test-quick:  ## Run tests without re-syncing
-	uv run pytest
+	uv run pytest && cd frontend && bunx vitest run
 
 dev:  ## Start the dev server (database, backend, frontend)
 	./dev.sh
