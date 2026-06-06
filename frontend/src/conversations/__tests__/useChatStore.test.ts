@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { createRoot } from "solid-js";
 import { ConversationStore, createConversationStore } from "../store";
 
 // Helper to count localStorage keys with a prefix
@@ -24,10 +25,18 @@ function getConversationKeys(): string[] {
 
 describe("ConversationStore", () => {
   let store: ConversationStore;
+  let dispose: (() => void) | undefined;
 
   beforeEach(() => {
     localStorage.clear();
-    store = createConversationStore();
+    dispose = createRoot((rootDispose) => {
+      store = createConversationStore();
+      return rootDispose;
+    });
+  });
+
+  afterEach(() => {
+    dispose?.();
   });
 
   it("auto-creates one empty conversation on first use and selects it", () => {
@@ -134,7 +143,10 @@ describe("ConversationStore", () => {
     localStorage.setItem(`conversation:${id2}`, JSON.stringify(conv2));
     localStorage.setItem("conversation:lastOpened", id2);
 
-    store = createConversationStore();
+    createRoot((rootDispose) => {
+      store = createConversationStore();
+      return rootDispose;
+    });
 
     expect(store.conversations().length).toBe(2);
     // Should restore lastOpened
@@ -168,8 +180,12 @@ describe("ConversationStore", () => {
 
   it("tolerates corrupt localStorage gracefully", () => {
     localStorage.setItem("conversation:bad", "not valid json");
-    const store2 = createConversationStore();
+    let store2: ConversationStore;
+    createRoot((rootDispose) => {
+      store2 = createConversationStore();
+      return rootDispose;
+    });
     // Should still have at least the auto-created one
-    expect(store2.conversations().length).toBeGreaterThanOrEqual(1);
+    expect(store2!.conversations().length).toBeGreaterThanOrEqual(1);
   });
 });
