@@ -120,23 +120,29 @@ A Vite + SolidJS SPA with:
 
 Connects to `POST /api/chat` via `EventSource` (SSE).
 
-**7. Deployment (`docker/`)**
+**7. Deployment**
 
-Single `docker-compose.yml` with:
-- `backend` service (FastAPI + ADK + MCP + RAG, built from `Dockerfile`)
-- `postgres` service (PostgreSQL 16 with pgvector pre-installed, for local dev; Supabase handles this in production)
-- Nginx or Caddy container serving the SolidJS static build and proxying `/api` to the backend
+Two separate Docker images, each self-contained:
+- **`multi-agent-rag-be`** (`backend/Dockerfile`): FastAPI + ADK + MCP + RAG on `python:3.13-slim`
+- **`multi-agent-rag-fe`** (`frontend/Dockerfile`): multi-stage — Bun builds the SolidJS SPA, then Caddy serves it with `/api/*` reverse-proxied to the backend
 
-**8. CI/CD Pipeline (`.github/workflows/`)**
+Deployed via a two-service docker-compose on Coolify:
+- `backend` — pulls `ghcr.io/olegedly/multi-agent-rag-be:latest`, internal port 8000
+- `frontend` — pulls `ghcr.io/olegedly/multi-agent-rag-fe:latest`, internal port 80, with a persistent volume for Caddy TLS data
+
+For local dev, `docker-compose.base.yml` + `docker-compose.dev-override.yml` spin up the backend alongside a `pgvector/pgvector:pg18` database. The frontend runs via `bun run --cwd frontend dev` on the host (Vite HMR).
+
+**8. CI/CD Pipeline (`.github/workflows/deploy.yml`)**
 
 GitHub Actions workflow triggered on pushes to `main` branch:
 
-1. Build the backend Docker image and push to GitHub Container Registry (`ghcr.io`).
-2. Build the frontend static assets (`npm run build`) and include them via a multi-stage Dockerfile.
-3. Trigger Coolify deployment via its API: send the new image tag and commit SHA, Coolify pulls and redeploys with zero downtime.
-4. Coolify handles SSL and reverse proxy on the VPS automatically.
+1. Build **both** images and push to GitHub Container Registry:
+   - `ghcr.io/olegedly/multi-agent-rag-be:latest` — from `backend/Dockerfile`
+   - `ghcr.io/olegedly/multi-agent-rag-fe:latest` — from `frontend/Dockerfile`
+2. The frontend Dockerfile is self-contained: first stage builds the SPA with Bun, second stage serves it via Caddy. No frontend build step on the CI runner (only Docker is needed).
+3. Coolify pulls the new images and redeploys. SSL and reverse proxy are handled by Coolify's edge proxy.
 
-Pipeline: `git push` → GitHub Actions builds + pushes images → Coolify deploys. No manual SSH after initial setup.
+Pipeline: `git push` → GitHub Actions builds + pushes both images → Coolify pulls and redeploys. No manual SSH after initial setup.
 
 ### RAG Dataset
 
