@@ -1,4 +1,4 @@
-import { For, Show, createSignal } from "solid-js";
+import { For, Show, createSignal, createMemo } from "solid-js";
 import type { Conversation } from "./store";
 
 interface SidebarProps {
@@ -13,6 +13,16 @@ interface SidebarProps {
 
 export function Sidebar(props: SidebarProps) {
   const [confirmingId, setConfirmingId] = createSignal<string | null>(null);
+
+  const enriched = createMemo(() => {
+    const currId = props.currentId;
+    const confirmId = confirmingId();
+    return props.conversations.map((conv) => ({
+      conv,
+      isCurrent: conv.id === currId,
+      isConfirming: confirmId === conv.id,
+    }));
+  });
 
   const handleDelete = (id: string) => {
     if (confirmingId() === id) {
@@ -60,10 +70,9 @@ export function Sidebar(props: SidebarProps) {
             </p>
           }
         >
-          <For each={props.conversations}>
-            {(conv) => {
-              const isCurrent = conv.id === props.currentId;
-              const isConfirming = confirmingId() === conv.id;
+          <For each={enriched()}>
+            {(item) => {
+              const { conv, isCurrent, isConfirming } = item;
               return (
                 <div
                   class={`group flex items-center justify-between px-3 py-2 rounded-lg text-sm cursor-pointer transition-colors ${

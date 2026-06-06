@@ -1,4 +1,4 @@
-import { For, Show, createSignal, createEffect } from "solid-js";
+import { For, Show, createSignal, createEffect, onMount } from "solid-js";
 import type { UIMessage } from "@tanstack/ai-client";
 
 interface ChatViewProps {
@@ -11,9 +11,35 @@ interface ChatViewProps {
   onDismissStorageError: () => void;
 }
 
+function isDesktop(): boolean {
+  return !("ontouchstart" in window) && window.matchMedia("(pointer: fine)").matches;
+}
+
 export function ChatView(props: ChatViewProps) {
   const [input, setInput] = createSignal("");
   let messagesEndRef: HTMLDivElement | undefined;
+  let textareaRef: HTMLTextAreaElement | undefined;
+
+  // Autofocus on app load (desktop only)
+  onMount(() => {
+    if (isDesktop()) {
+      queueMicrotask(() => {
+        textareaRef?.focus();
+      });
+    }
+  });
+
+  // Autofocus after LLM response finishes streaming (desktop only)
+  let wasLoading = false;
+  createEffect(() => {
+    const loading = props.isLoading;
+    if (wasLoading && !loading && isDesktop()) {
+      queueMicrotask(() => {
+        textareaRef?.focus();
+      });
+    }
+    wasLoading = loading;
+  });
 
   createEffect(() => {
     // Scroll to bottom whenever messages change
@@ -98,6 +124,7 @@ export function ChatView(props: ChatViewProps) {
       <div class="border-t border-(--border) bg-(--bg-secondary) px-4 py-3">
         <form onSubmit={handleSubmit} class="flex gap-2 items-end">
           <textarea
+            ref={textareaRef}
             value={input()}
             onInput={(e) => setInput(e.currentTarget.value)}
             disabled={props.isLoading}

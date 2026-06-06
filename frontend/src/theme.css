@@ -26,12 +26,12 @@
   --accent: #60a5fa;
   --accent-hover: #93bbfd;
   --border: #334155;
-  --hover: #1e293b;
+  --hover: #334155;
   --danger: #f87171;
   --danger-hover: #ef4444;
   --bg-chat-input: #1e293b;
-  --bg-user-bubble: #60a5fa;
-  --text-user-bubble: #0f172a;
+  --bg-user-bubble: #3b82f6;
+  --text-user-bubble: #ffffff;
   --bg-assistant-bubble: #1e293b;
   --text-assistant-bubble: #f1f5f9;
   --sidebar-bg: #1e293b;
