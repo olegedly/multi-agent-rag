@@ -16,20 +16,20 @@ def create_llm_client() -> LLMClient:
         LLM_BASE_URL  — base URL for the API
         LLM_MAX_TOKENS — optional, default 4096
     """
-    provider = settings.llm_provider
+    provider_type = settings.llm_provider_type
     model = settings.llm_model
     api_key = settings.llm_api_key
     base_url = settings.llm_base_url
     max_tokens = settings.llm_max_tokens
 
-    if provider == "anthropic":
+    if provider_type == "anthropic":
         return AnthropicClient(
             model=model,
             base_url=base_url,
             api_key=api_key,
             max_tokens=max_tokens,
         )
-    elif provider == "openai":
+    elif provider_type == "openai":
         return OpenAIClient(
             model=model,
             base_url=base_url,
@@ -37,4 +37,6 @@ def create_llm_client() -> LLMClient:
             max_tokens=max_tokens,
         )
     else:
-        raise ValueError(f"Unknown LLM provider: {provider!r}. Expected 'anthropic' or 'openai'.")
+        raise ValueError(
+            f"Unknown LLM provider type: {provider_type!r}. Expected 'anthropic' or 'openai'."
+        )

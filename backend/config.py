@@ -14,8 +14,8 @@ class Settings(BaseSettings):
     postgres_port: int = 5432
 
     # LLM provider — abstracted behind LLMClient
-    llm_provider: str = "anthropic"  # "anthropic" | "openai"
-    llm_model: str = "deepseek-chat"
+    llm_provider_type: str = ""  # "anthropic" | "openai"
+    llm_model: str = ""
     llm_api_key: str = ""
     llm_base_url: str = ""
     llm_max_tokens: int = 4096
