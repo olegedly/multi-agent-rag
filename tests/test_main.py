@@ -1,48 +1,27 @@
-"""Tests for the FastAPI application entry point.
+"""Tests for the FastAPI application factory.
 
-Patches the LLM factory at module load time so the app uses a
-FakeLLMClient for all routes.
+Uses ``create_app()`` with an injected ``FakeLLMClient`` — no import-time
+patching or ``importlib.reload`` needed.
 """
-
-import json
 
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.main import create_app
 from tests.fakes import FakeLLMClient
 
 
-# ---------------------------------------------------------------------------
-# Patch the factory before ``backend.main`` is imported so the module-level
-# ``get_llm_client()`` call returns a FakeLLMClient.
-# ---------------------------------------------------------------------------
-
-import backend.llm.factory as _factory_mod
-
-_original_factory = _factory_mod.create_llm_client
-_factory_mod.create_llm_client = lambda: FakeLLMClient()
-
-import importlib
-import backend.main as _main_mod
-
-importlib.reload(_main_mod)
-
-from backend.main import app
-
-
-@pytest.fixture(scope="module", autouse=True)
-def _restore_factory():
-    yield
-    _factory_mod.create_llm_client = _original_factory
+# ── Fixture ──────────────────────────────────────────────────────────────────
 
 
 @pytest.fixture
 def client():
+    app = create_app(llm_client=FakeLLMClient())
     with TestClient(app) as c:
         yield c
 
 
-# ── Tests ────────────────────────────────────────────────────────────────────
+# ── Health ───────────────────────────────────────────────────────────────────
 
 
 class TestHealth:
@@ -59,6 +38,9 @@ class TestHealth:
         data = response.json()
         assert data["app"] == "multi-agent-rag"
         assert data["status"] == "ok"
+
+
+# ── Chat endpoint ────────────────────────────────────────────────────────────
 
 
 class TestChatEndpoint:
