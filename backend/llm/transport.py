@@ -15,12 +15,18 @@ from backend.llm.protocol import LLMError
 
 @runtime_checkable
 class Transport(Protocol):
-    """Protocol that both ``HttpTransport`` and ``FakeTransport`` satisfy."""
+    """Protocol that both ``HttpTransport`` and ``FakeTransport`` satisfy.
+
+    ``send_stream`` uses plain ``def`` (not ``async def``) so the return
+    type is ``AsyncIterable[str]`` instead of ``Coroutine[..., AsyncIterable]]``
+    — both async generators (``HttpTransport``) and coroutine-based streams
+    satisfy it.
+    """
 
     async def send(self, url: str, headers: dict, json_body: dict) -> httpx.Response:
         ...
 
-    async def send_stream(self, url: str, headers: dict, json_body: dict) -> AsyncIterable[str]:
+    def send_stream(self, url: str, headers: dict, json_body: dict) -> AsyncIterable[str]:
         ...
 
     async def close(self) -> None:
