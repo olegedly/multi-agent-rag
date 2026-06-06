@@ -15,13 +15,15 @@ Without this demo, every proposal is a promise. With it, every proposal includes
 
 ## Solution
 
-A deployed, interactive multi-agent research system where:
+An interactive multi-agent research system where:
 
 - A user submits a research question via a web dashboard
-- Three specialist AI agents (Researcher, Critic, Synthesizer) collaborate via MCP to answer it
+- Three specialist AI agents (Researcher, Critic, Synthesizer) collaborate via ADK to answer it
 - Agents search a pgvector knowledge base (RAG over the MCP specification + ADK documentation)
 - The entire reasoning process streams to the dashboard in real-time — tool calls, intermediate findings, final synthesis
-- The system is Dockerized and deployed to a VPS with Caddy serving the SolidJS SPA and reverse-proxying to FastAPI
+- The system is config-driven: LLM provider, model, and API endpoint are environment variables
+- The frontend is a Vite + SolidJS SPA served as static files, connecting to the backend via `@tanstack/ai-solid`'s `useChat` hook over the AG-UI protocol
+- The system is Dockerized for deployment, with a native `fastapi dev` workflow for local development
 
 The demo is **self-referential**: it uses ADK + MCP to answer questions about ADK + MCP. This signals deep domain competence to potential clients.
 
@@ -33,7 +35,7 @@ The demo is **self-referential**: it uses ADK + MCP to answer questions about AD
 4. As a potential client, I want to query the system about MCP or ADK topics, so that I can assess the depth of relevant domain knowledge.
 5. As a potential client, I want to see the system deployed at a live URL, so that I can evaluate it without running any code.
 6. As a potential client, I want to see clean, production-quality code in a public repository, so that I can evaluate engineering practices.
-7. As the developer, I want the LLM client to be abstracted behind a single interface that DeepSeek (via its Anthropic-compatible endpoint) satisfies, so that I can explain to future clients that adapting to their preferred provider is a configuration change, not a rewrite.
+7. As the developer, I want the LLM client to be abstracted behind a single interface that supports both OpenAI-format and Anthropic-format endpoints, so that I can explain to future clients that adapting to their preferred provider is a configuration change (`LLM_PROVIDER`, `LLM_API_KEY`, `LLM_BASE_URL`), not a rewrite.
 8. As the developer, I want the RAG pipeline to use pgvector for semantic search, so that I can demonstrate vector database skills.
 9. As the developer, I want the MCP server to be independently runnable and testable, so that I can reuse it in future projects.
 10. As the developer, I want the system to run in Docker Compose with a single command, so that deployment is reproducible.
@@ -50,40 +52,55 @@ The demo is **self-referential**: it uses ADK + MCP to answer questions about AD
 ### Architecture Overview
 
 ```
-SolidJS SPA ──SSE──▶ FastAPI ──▶ Google ADK Orchestrator
-                              │         ├── Agent A (Researcher)
-                              │         ├── Agent B (Critic)
-                              │         └── Agent C (Synthesizer)
+SolidJS SPA ──AG-UI/SSE──▶ FastAPI ──▶ Google ADK Orchestrator
+  (@tanstack/ai-solid,     (add_adk_         ├── Agent A (Researcher)
+   fetchServerSentEvents)   fastapi_endpoint) ├── Agent B (Critic)
+                                              └── Agent C (Synthesizer)
                               │
                               ├── MCP Server (search_knowledge, fetch_document)
                               │         └── pgvector RAG
-                              │               └── PostgreSQL (Supabase Cloud)
+                              │               └── PostgreSQL
                               │
-                              └── DeepSeek LLM (via Anthropic-compatible endpoint)
+                              └── backend/llm/ layer
+                                    ├── AdkLlmAdapter(BaseLlm)
+                                    └── OpenAIClient | AnthropicClient
+                                          (config-driven: env vars for provider, model, endpoint)
 ```
 
 ### Modules
 
-**1. LLM Client Abstraction (`llm/client.py`)**
+**1. LLM Client Abstraction (`backend/llm/`)**
 
-A thin wrapper around the Anthropic SDK, configured to call DeepSeek's Anthropic-compatible endpoint (`https://api.deepseek.com/anthropic`). The tool-use loop (call → tool_use → execute → submit → call again) lives here.
+A config-driven multi-provider abstraction layer. The package exposes a single abstract interface (`LLMClient`) with two provider implementations plus an ADK adapter:
 
-The interface is designed to be provider-agnostic: `base_url` and `api_key` are environment variables. For the demo they point at DeepSeek. Paying clients who want real Claude would change those two values — but that is their choice and their expense. The demo never calls Anthropic's API.
+| File | Purpose |
+|------|---------|
+| `protocol.py` | Abstract `LLMClient` interface + `Message`, `Usage`, `LLMResponse`, `LLMError` types. Pure Python, no framework coupling. |
+| `anthropic.py` | `AnthropicClient` — POSTs to `{base_url}/messages` (Anthropic messages format). Parses streaming SSE (`content_block_delta`). |
+| `openai.py` | `OpenAIClient` — POSTs to `{base_url}/chat/completions` (OpenAI format). Parses streaming SSE (`choices[...].delta.content`). Tracks token usage from the final streaming event. |
+| `factory.py` | `create_llm_client()` reads `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL` from Settings / `.env` and returns the configured client. |
+| `adk_adapter.py` | `AdkLlmAdapter(BaseLlm)` — bridges any `LLMClient` into Google ADK. Converts ADK `LlmRequest` → `Message[]`, calls the client, wraps the response as ADK `LlmResponse` with `usage_metadata` so ADK's tracing and observability see token counts. |
 
-This is a **deep module**: the rest of the system never knows which LLM is behind the interface.
+Provider selection is config-driven: `LLM_PROVIDER=openai` hits `/chat/completions`; `LLM_PROVIDER=anthropic` hits `/messages`. The rest of the system never knows which provider is behind the interface.
 
-**2. FastAPI Backend (`api/`)**
+The client is config-driven: `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, and `LLM_BASE_URL` are set via environment variables. Swapping providers is a config change, not a code change.
+
+**2. FastAPI Backend (`backend/`)**
 
 Standard FastAPI application with:
-- `POST /api/chat` — accepts a question, invokes the ADK orchestrator, returns a streaming SSE response
-- Pydantic models for request/response schemas
-- Dependency injection for the LLM client, database session, and ADK runtime
+- `POST /api/chat` — mounted via `ag_ui_adk.add_adk_fastapi_endpoint()`, accepts AG-UI `RunAgentInput`, invokes the ADK agent, returns streaming AG-UI events over SSE
+- `GET /api/health` — health check
+- `GET /capabilities` — agent capability discovery (added by AG-UI middleware)
+- `POST /agents/state` — experimental thread state retrieval (added by AG-UI middleware)
+- Pydantic settings via `config.py` (reads `.env` for LLM config, Postgres credentials)
+- The ADK runtime and LLM client are wired at import time, not via DI — refactoring to DI is deferred until multi-agent orchestration (#5)
 
 **3. RAG Pipeline (`rag/`)**
 
 - Document chunking (recursive text splitter targeting ~500-token chunks with 50-token overlap)
-- Embedding via DeepSeek's embedding API (OpenAI-compatible client shape)
-- Storage in Supabase PostgreSQL with pgvector `VECTOR(1536)` column
+- Embedding via configurable embedding API (OpenAI-compatible client shape)
+- Storage in PostgreSQL with pgvector `VECTOR(1536)` column
+- Production: managed Supabase instance; development: local `pgvector/pgvector:pg18` Docker container
 - IVFFlat index on the embedding column for fast cosine similarity search
 - Query flow: embed user question → `SELECT ... ORDER BY embedding <=> $query LIMIT 5` → return chunks as context
 
@@ -105,7 +122,7 @@ Three specialist agents, each defined as an ADK `LlmAgent`:
 
 An ADK `SequentialAgent` orchestrates the flow: Researcher → Critic → Synthesizer. Each agent receives the previous agent's output in its context.
 
-Agent thinking and intermediate results are streamed via ADK's built-in event system, which feeds into FastAPI's SSE endpoint.
+Agent thinking and intermediate results are streamed via ADK's built-in event system, which the AG-UI middleware converts to SSE events (`RUN_STARTED` → `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT`* → `TEXT_MESSAGE_END` → `RUN_FINISHED`).
 
 **6. SolidJS Frontend (`frontend/`)**
 
@@ -118,25 +135,31 @@ A Vite + SolidJS SPA with:
 - Conversation persistence via localStorage (no backend storage). Data model: `{ id, title, createdAt, messages[] }`. Title auto-generated from first user message (~50 chars, word-bounded). LM Studio UI is the reference.
 - Tailwind CSS for styling (no component library dependency)
 
-Connects to `POST /api/chat` via `EventSource` (SSE).
+Connects to `POST /api/chat` via `@tanstack/ai-solid`'s `useChat` hook with `fetchServerSentEvents` adapter (AG-UI protocol over SSE).
 
-**7. Deployment (`docker/`)**
+**7. Deployment**
 
-Single `docker-compose.yml` with:
-- `backend` service (FastAPI + ADK + MCP + RAG, built from `Dockerfile`)
-- `postgres` service (PostgreSQL 16 with pgvector pre-installed, for local dev; Supabase handles this in production)
-- Nginx or Caddy container serving the SolidJS static build and proxying `/api` to the backend
+Two separate Docker images, each self-contained:
+- **`multi-agent-rag-be`** (`backend/Dockerfile`): FastAPI + ADK + MCP + RAG on `python:3.13-slim`
+- **`multi-agent-rag-fe`** (`frontend/Dockerfile`): multi-stage — Bun builds the SolidJS SPA, then Caddy serves it with `/api/*` reverse-proxied to the backend
 
-**8. CI/CD Pipeline (`.github/workflows/`)**
+Deployed via a two-service docker-compose on Coolify:
+- `backend` — pulls `ghcr.io/olegedly/multi-agent-rag-be:latest`, internal port 8000
+- `frontend` — pulls `ghcr.io/olegedly/multi-agent-rag-fe:latest`, internal port 80, with a persistent volume for Caddy TLS data
+
+For local dev, `docker-compose.base.yml` + `docker-compose.dev-override.yml` spin up only a `pgvector/pgvector:pg18` database container (the production database is a managed Supabase instance — PostgreSQL with pgvector — not Docker). The backend runs natively via `uv run fastapi dev backend/main.py --port 8000` (hot-reload on save). The frontend runs via `bun run --cwd frontend dev` on the host (Vite HMR with `/api/*` proxy to `localhost:8000`). Both are orchestrated by `./dev.sh`.
+
+**8. CI/CD Pipeline (`.github/workflows/deploy.yml`)**
 
 GitHub Actions workflow triggered on pushes to `main` branch:
 
-1. Build the backend Docker image and push to GitHub Container Registry (`ghcr.io`).
-2. Build the frontend static assets (`npm run build`) and include them via a multi-stage Dockerfile.
-3. Trigger Coolify deployment via its API: send the new image tag and commit SHA, Coolify pulls and redeploys with zero downtime.
-4. Coolify handles SSL and reverse proxy on the VPS automatically.
+1. Build **both** images and push to GitHub Container Registry:
+   - `ghcr.io/olegedly/multi-agent-rag-be:latest` — from `backend/Dockerfile`
+   - `ghcr.io/olegedly/multi-agent-rag-fe:latest` — from `frontend/Dockerfile`
+2. The frontend Dockerfile is self-contained: first stage builds the SPA with Bun, second stage serves it via Caddy. No frontend build step on the CI runner (only Docker is needed).
+3. Coolify pulls the new images and redeploys. SSL and reverse proxy are handled by Coolify's edge proxy.
 
-Pipeline: `git push` → GitHub Actions builds + pushes images → Coolify deploys. No manual SSH after initial setup.
+Pipeline: `git push` → GitHub Actions builds + pushes both images → Coolify pulls and redeploys. No manual SSH after initial setup.
 
 ### RAG Dataset
 
@@ -189,11 +212,11 @@ The knowledge base combines the **MCP specification** and the **Google ADK docum
 
 ### LLM Provider Strategy
 
-**The demo exclusively uses DeepSeek** via its Anthropic-compatible endpoint (`https://api.deepseek.com/anthropic`). The Anthropic SDK is used as the client library for its message format, tool-use loop, and streaming support — but it points at DeepSeek's API, never at Anthropic's.
+The `LLMClient` abstraction (`backend/llm/`) supports both OpenAI and Anthropic message formats via a config-driven factory. `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, and `LLM_BASE_URL` are set via environment variables — swapping providers is a config change, not a code change.
 
-The abstraction layer encodes the *interface* (Anthropic's message/tool/stream shape), not a specific provider. A configuration swap of `base_url` + `api_key` in the environment variables is all that's needed to point at real Claude — but that is only done for paying clients who choose and fund that provider. The demo itself never calls Claude.
+The abstract interface encodes the *contract* (messages in → text+usage out), not a specific provider's SDK. The provider, model, and endpoint serving the demo are set in deployment configuration and are not hardcoded in the application.
 
-Embedding: DeepSeek embedding API via OpenAI-compatible client. Same principle — the interface is provider-agnostic, the demo only calls DeepSeek.
+Embedding follows the same pattern: a configurable embedding client will be added alongside the RAG pipeline.
 
 ### Observability
 
@@ -207,7 +230,7 @@ ADK's built-in tracing captures each agent's turns, tool calls, token usage, and
 - **FastAPI endpoints:** Test that `POST /api/chat` returns a 200 with SSE content-type, that it streams valid JSON events, and that error cases (missing question, empty response) return appropriate error codes.
 - **LLM client:** Test that the abstraction layer correctly routes to DeepSeek vs Claude based on the env var, and that tool-use loop retries on transient failures.
 
-Modules with tests: `llm/client.py`, `rag/chunker.py`, `rag/query.py`, `mcp_server/tools.py`, `api/routes.py`.
+Modules with tests: `backend/llm/` (protocol, clients, adapter), `rag/chunker.py`, `rag/query.py`, `mcp_server/tools.py`, `backend/routes.py`.
 
 Prior art: these are standard service-level integration tests — no special patterns needed.
 

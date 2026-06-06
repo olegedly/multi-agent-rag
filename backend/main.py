@@ -1,47 +1,42 @@
-from collections.abc import AsyncIterable
-from contextlib import asynccontextmanager
-from time import sleep
-
-from fastapi import Depends, FastAPI
-from fastapi.sse import EventSourceResponse
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
+from fastapi import FastAPI
+from google.adk.agents import Agent
 
 from backend.config import settings
-from backend.db import get_db, init_db
+from backend.llm.adk_adapter import AdkLlmAdapter
+from backend.llm.factory import create_llm_client
+
+app = FastAPI(title=settings.app_name)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    await init_db()
-    yield
+# ---------------------------------------------------------------------------
+# LLM — injected via environment, not hardcoded
+# ---------------------------------------------------------------------------
+
+llm_client = create_llm_client()
+llm_model = AdkLlmAdapter(llm_client)
+
+root_agent = Agent(
+    name="rag_assistant",
+    model=llm_model,
+    instruction=(
+        "You are a helpful research assistant. Answer questions clearly and concisely."
+    ),
+)
+
+adk_agent = ADKAgent(
+    adk_agent=root_agent,
+    app_name=settings.app_name,
+    user_id="dev",
+)
+
+# Mounts POST /api/chat as AG-UI endpoint, plus GET /capabilities and POST /agents/state
+add_adk_fastapi_endpoint(app, adk_agent, path="/api/chat")
 
 
-app = FastAPI(title=settings.app_name, lifespan=lifespan)
-
-
+# ---------------------------------------------------------------------------
+# Health checks
+# ---------------------------------------------------------------------------
 @app.get("/api/health")
-async def backend_health():
+async def health():
     return {"app": settings.app_name, "status": "ok"}
-
-
-@app.get("/api/health/db")
-async def db_health(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(text("SELECT 1"))
-    return {"db": result.scalar_one()}
-
-
-@app.get("/api/data")
-async def root():
-    return {"message": "Hello World!"}
-
-
-test_text: str = "A production-grade multi-agent research system built with Google ADK, MCP, and pgvector. Three specialist AI agents (Researcher, Critic, Synthesizer) collaborate via the Model Context Protocol to answer questions about MCP and ADK documentation — cited, grounded, and streamed live to a SolidJS dashboard."
-
-
-@app.get("/api/chat", response_class=EventSourceResponse)
-async def sse_stream() -> AsyncIterable[str]:
-    chunks = test_text.split(" ")
-    for chunk in chunks:
-        sleep(0.2)
-        yield chunk
