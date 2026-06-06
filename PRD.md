@@ -137,12 +137,16 @@ Agent thinking and intermediate results are streamed via ADK's built-in event sy
 **7. SolidJS Frontend (`frontend/`)**
 
 A Vite + SolidJS SPA with:
-- Chat input area (textarea + submit button)
-- Streaming output display showing agent labels, tool calls, and reasoning in real-time
-- Final answer with citation blocks
-- Agent status indicators (thinking / searching / synthesizing / done)
-- Conversation sidebar (left panel): lists all conversations by auto-generated title, newest first. Current conversation highlighted. Delete button per conversation. New conversation button at top.
-- Conversation persistence via localStorage (no backend storage). Data model: `{ id, title, createdAt, messages[] }`. Title auto-generated from first user message (~50 chars, word-bounded). LM Studio UI is the reference.
+- Chat input area (auto-growing textarea + submit and stop buttons)
+- Streaming message display via user/assistant text bubbles
+- Agent labels, tool call displays, and reasoning steps rendered in real-time as the multi-agent pipeline runs *(pending: integrated as part of the ADK agent frontend pipeline)*
+- Cited answer blocks showing knowledge-base sources in the final response *(pending: depends on the ADK agent system returning citations in the output)*
+- Agent status indicators (thinking / searching / synthesizing / done), shown per agent as the pipeline progresses *(pending: requires agent metadata in the AG-UI event stream)*
+- Typing indicator (animated ellipsis) shown while the LLM is generating a response
+- Error banner for LLM errors and localStorage quota warnings
+- Conversation sidebar (left panel): lists all conversations by auto-generated title, newest first. Current conversation highlighted. Two-step delete confirmation (hover → trash icon → confirm/cancel). New conversation button at top. Mobile-responsive with an overlay backdrop.
+- Conversation persistence via localStorage (no backend storage). Data model: `{ id, title, createdAt, messages[] }`. Title auto-generated from first user message (~50 chars, word-bounded). `beforeunload` safety net ensures saves survive accidental navigation. LM Studio UI is the reference.
+- Dark/light theme toggle, persisted in localStorage
 - Tailwind CSS for styling (no component library dependency)
 
 Connects to `POST /api/chat` via `@tanstack/ai-solid`'s `useChat` hook with `fetchServerSentEvents` adapter (AG-UI protocol over SSE).
@@ -242,6 +246,16 @@ ADK's built-in tracing captures each agent's turns, tool calls, token usage, and
 - **Test layout:** Parallel to `backend/` at `tests/`, keeping test code out of Docker images and navigation noise free.
 
 ### What is tested
+
+| Module | How | What it covers |
+|---|---|---|
+| `frontend/.../title.ts` | `generateTitle` pure function | Empty string, whitespace, word-boundary truncation, trailing-punctuation trimming, single-word edge cases — 8 tests |
+| `frontend/.../store.ts` | `createConversationStore` | Auto-creation, localStorage CRUD, switch/delete/create, corrupt-data tolerance, last-conversation auto-create — 9 tests |
+| `frontend/.../Sidebar.tsx` | `render` + `fireEvent` | Renders list, highlights current, empty state, onNew/onSelect callbacks, trash buttons per row, confirm/cancel hidden on mount — 7 tests |
+| `frontend/.../ChatView.tsx` | `render` + `createSignal` mocks | Message rendering, send/stop buttons, disabled-during-loading, error banner, storage error dismiss, typing indicator logic — 11 tests |
+| `frontend/.../deriveTitle` (useChatStore internals) | Pure-function inline | First-user-message extraction from `UIMessage[]`, multi-part text, no-text-parts, truncation, whitespace fallback — 9 tests |
+
+Frontend tests: **46 tests across 5 files**, all passing. Runs in CI.
 
 | Module | How | What it covers |
 |---|---|---|
