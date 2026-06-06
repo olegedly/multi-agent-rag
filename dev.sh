@@ -22,7 +22,7 @@ echo "PostgreSQL is ready."
 
 # ── Backend (native, hot-reload) ───────────────────────────
 echo "Starting backend (fastapi dev)..."
-uv run fastapi dev backend/main.py --port 8000 --host 0.0.0.0 &
+uv run fastapi dev --port 8000 --host 0.0.0.0 &
 BACKEND_PID=$!
 
 echo "Waiting for backend to be ready..."

@@ -53,8 +53,8 @@ The demo is **self-referential**: it uses ADK + MCP to answer questions about AD
 
 ```
 SolidJS SPA ──AG-UI/SSE──▶ FastAPI ──▶ Google ADK Orchestrator
-  (@tanstack/ai-solid,     (add_adk_         ├── Agent A (Researcher)
-   fetchServerSentEvents)   fastapi_endpoint) ├── Agent B (Critic)
+  (@tanstack/ai-solid,     (create_app()    ├── Agent A (Researcher)
+   fetchServerSentEvents)   factory)        ├── Agent B (Critic)
                                               └── Agent C (Synthesizer)
                               │
                               ├── MCP Server (search_knowledge, fetch_document)
@@ -63,6 +63,7 @@ SolidJS SPA ──AG-UI/SSE──▶ FastAPI ──▶ Google ADK Orchestrator
                               │
                               └── backend/llm/ layer
                                     ├── AdkLlmAdapter(BaseLlm)
+                                    ├── HttpTransport / Transport Protocol
                                     └── OpenAIClient | AnthropicClient
                                           (config-driven: env vars for provider, model, endpoint)
 ```
@@ -75,27 +76,36 @@ A config-driven multi-provider abstraction layer. The package exposes a single a
 
 | File | Purpose |
 |------|---------|
-| `protocol.py` | Abstract `LLMClient` interface + `Message`, `Usage`, `LLMResponse`, `LLMError` types. Pure Python, no framework coupling. |
-| `anthropic.py` | `AnthropicClient` — POSTs to `{base_url}/messages` (Anthropic messages format). Parses streaming SSE (`content_block_delta`). |
-| `openai.py` | `OpenAIClient` — POSTs to `{base_url}/chat/completions` (OpenAI format). Parses streaming SSE (`choices[...].delta.content`). Tracks token usage from the final streaming event. |
+| `protocol.py` | Abstract `LLMClient` interface + `Message`, `Usage`, `LLMResponse`, `LLMError` types. `generate_stream` yields `(text_delta, usage)` tuples so callers can observe usage mid-stream without mutating instance state. Pure Python, no framework coupling. |
+| `transport.py` | `HttpTransport` — owns an `httpx.AsyncClient`, provides `send()` / `send_stream()`, wraps HTTP errors into `LLMError`. Also exposes a `Transport` Protocol that both `HttpTransport` and test fakes satisfy. Hoisted `_parse_error_body` from the duplicate implementations. |
+| `anthropic.py` | `AnthropicClient` — delegates HTTP to a `Transport` instance; POSTs to `{base_url}/messages` (Anthropic messages format). Parses streaming SSE (`content_block_delta`). |
+| `openai.py` | `OpenAIClient` — delegates HTTP to a `Transport` instance; POSTs to `{base_url}/chat/completions` (OpenAI format). Parses streaming SSE (`choices[...].delta.content`). |
 | `factory.py` | `create_llm_client()` reads `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL` from Settings / `.env` and returns the configured client. |
-| `adk_adapter.py` | `AdkLlmAdapter(BaseLlm)` — bridges any `LLMClient` into Google ADK. Converts ADK `LlmRequest` → `Message[]`, calls the client, wraps the response as ADK `LlmResponse` with `usage_metadata` so ADK's tracing and observability see token counts. |
+| `adk_adapter.py` | `AdkLlmAdapter(BaseLlm)` — bridges any `LLMClient` into Google ADK. Converts ADK `LlmRequest` → `Message[]`, calls the client, wraps the response as ADK `LlmResponse` with `usage_metadata` so ADK's tracing and observability see token counts. Accumulates `Usage` from stream tuples rather than reading `last_usage` post-stream. |
 
-Provider selection is config-driven: `LLM_PROVIDER=openai` hits `/chat/completions`; `LLM_PROVIDER=anthropic` hits `/messages`. The rest of the system never knows which provider is behind the interface.
+Provider selection is config-driven: `LLM_PROVIDER=openai` hits `/chat/completions`; `LLM_PROVIDER=anthropic` hits `/messages`. Each client accepts an optional `transport` parameter — when omitted a fresh `HttpTransport` is created with its own timeout. Tests inject a `FakeTransport` to avoid real HTTP calls.
+
+`_parse_error_body` lives in `transport.py` as a shared utility rather than being duplicated across clients — the hoist keeps error-handling uniform.
 
 The client is config-driven: `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, and `LLM_BASE_URL` are set via environment variables. Swapping providers is a config change, not a code change.
 
-**2. FastAPI Backend (`backend/`)**
+**2. Database Layer (`backend/db.py`)**
 
-Standard FastAPI application with:
+- `create_db_sessionmaker(database_url)` creates an async SQLAlchemy engine + sessionmaker lazily, rather than at import time
+- `get_db(sessionmaker)` — FastAPI-compatible async generator dependency
+- `init_db(database_url)` — creates the pgvector extension on startup, owning its own engine lifetime
+
+**3. FastAPI Backend (`backend/`)**
+
+Standard FastAPI application assembled via the `create_app()` factory with:
 - `POST /api/chat` — mounted via `ag_ui_adk.add_adk_fastapi_endpoint()`, accepts AG-UI `RunAgentInput`, invokes the ADK agent, returns streaming AG-UI events over SSE
 - `GET /api/health` — health check
 - `GET /capabilities` — agent capability discovery (added by AG-UI middleware)
 - `POST /agents/state` — experimental thread state retrieval (added by AG-UI middleware)
 - Pydantic settings via `config.py` (reads `.env` for LLM config, Postgres credentials)
-- The ADK runtime and LLM client are wired at import time, not via DI — refactoring to DI is deferred until multi-agent orchestration (#5)
+- Application assembly via `create_app(llm_client, settings)` factory with dependency injection — tests pass a `FakeLLMClient` directly, no import-time patching. The module-level `app = create_app()` preserves `fastapi dev` compatibility. A FastAPI lifespan handler closes transport connections on shutdown.
 
-**3. RAG Pipeline (`rag/`)**
+**4. RAG Pipeline (`rag/`)**
 
 - Document chunking (recursive text splitter targeting ~500-token chunks with 50-token overlap)
 - Embedding via configurable embedding API (OpenAI-compatible client shape)
@@ -104,7 +114,7 @@ Standard FastAPI application with:
 - IVFFlat index on the embedding column for fast cosine similarity search
 - Query flow: embed user question → `SELECT ... ORDER BY embedding <=> $query LIMIT 5` → return chunks as context
 
-**4. MCP Server (`mcp_server/`)**
+**5. MCP Server (`mcp_server/`)**
 
 A Python MCP server using the official `mcp` SDK exposing:
 - `search_knowledge(query: str, top_k: int = 5)` — semantic search over the RAG index
@@ -112,7 +122,7 @@ A Python MCP server using the official `mcp` SDK exposing:
 
 Both tools are thin wrappers over the RAG pipeline. The MCP server can run standalone (for testing with MCP Inspector or Claude Desktop) or embedded in the FastAPI process.
 
-**5. Google ADK Agent System (`agents/`)**
+**6. Google ADK Agent System (`agents/`)**
 
 Three specialist agents, each defined as an ADK `LlmAgent`:
 
@@ -124,20 +134,24 @@ An ADK `SequentialAgent` orchestrates the flow: Researcher → Critic → Synthe
 
 Agent thinking and intermediate results are streamed via ADK's built-in event system, which the AG-UI middleware converts to SSE events (`RUN_STARTED` → `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT`* → `TEXT_MESSAGE_END` → `RUN_FINISHED`).
 
-**6. SolidJS Frontend (`frontend/`)**
+**7. SolidJS Frontend (`frontend/`)**
 
 A Vite + SolidJS SPA with:
-- Chat input area (textarea + submit button)
-- Streaming output display showing agent labels, tool calls, and reasoning in real-time
-- Final answer with citation blocks
-- Agent status indicators (thinking / searching / synthesizing / done)
-- Conversation sidebar (left panel): lists all conversations by auto-generated title, newest first. Current conversation highlighted. Delete button per conversation. New conversation button at top.
-- Conversation persistence via localStorage (no backend storage). Data model: `{ id, title, createdAt, messages[] }`. Title auto-generated from first user message (~50 chars, word-bounded). LM Studio UI is the reference.
+- Chat input area (auto-growing textarea + submit and stop buttons)
+- Streaming message display via user/assistant text bubbles
+- Agent labels, tool call displays, and reasoning steps rendered in real-time as the multi-agent pipeline runs *(pending: integrated as part of the ADK agent frontend pipeline)*
+- Cited answer blocks showing knowledge-base sources in the final response *(pending: depends on the ADK agent system returning citations in the output)*
+- Agent status indicators (thinking / searching / synthesizing / done), shown per agent as the pipeline progresses *(pending: requires agent metadata in the AG-UI event stream)*
+- Typing indicator (animated ellipsis) shown while the LLM is generating a response
+- Error banner for LLM errors and localStorage quota warnings
+- Conversation sidebar (left panel): lists all conversations by auto-generated title, newest first. Current conversation highlighted. Two-step delete confirmation (hover → trash icon → confirm/cancel). New conversation button at top. Mobile-responsive with an overlay backdrop.
+- Conversation persistence via localStorage (no backend storage). Data model: `{ id, title, createdAt, messages[] }`. Title auto-generated from first user message (~50 chars, word-bounded). `beforeunload` safety net ensures saves survive accidental navigation. LM Studio UI is the reference.
+- Dark/light theme toggle, persisted in localStorage
 - Tailwind CSS for styling (no component library dependency)
 
 Connects to `POST /api/chat` via `@tanstack/ai-solid`'s `useChat` hook with `fetchServerSentEvents` adapter (AG-UI protocol over SSE).
 
-**7. Deployment**
+**8. Deployment**
 
 Two separate Docker images, each self-contained:
 - **`multi-agent-rag-be`** (`backend/Dockerfile`): FastAPI + ADK + MCP + RAG on `python:3.13-slim`
@@ -149,7 +163,7 @@ Deployed via a two-service docker-compose on Coolify:
 
 For local dev, `docker-compose.base.yml` + `docker-compose.dev-override.yml` spin up only a `pgvector/pgvector:pg18` database container (the production database is a managed Supabase instance — PostgreSQL with pgvector — not Docker). The backend runs natively via `uv run fastapi dev backend/main.py --port 8000` (hot-reload on save). The frontend runs via `bun run --cwd frontend dev` on the host (Vite HMR with `/api/*` proxy to `localhost:8000`). Both are orchestrated by `./dev.sh`.
 
-**8. CI/CD Pipeline (`.github/workflows/deploy.yml`)**
+**9. CI/CD Pipeline (`.github/workflows/deploy.yml`)**
 
 GitHub Actions workflow triggered on pushes to `main` branch:
 
@@ -214,7 +228,7 @@ The knowledge base combines the **MCP specification** and the **Google ADK docum
 
 The `LLMClient` abstraction (`backend/llm/`) supports both OpenAI and Anthropic message formats via a config-driven factory. `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, and `LLM_BASE_URL` are set via environment variables — swapping providers is a config change, not a code change.
 
-The abstract interface encodes the *contract* (messages in → text+usage out), not a specific provider's SDK. The provider, model, and endpoint serving the demo are set in deployment configuration and are not hardcoded in the application.
+The abstract interface encodes the *contract* (messages in → text+usage out), not a specific provider's SDK. `generate_stream` yields `(text_delta, usage)` tuples — usage is communicated through the return channel rather than through mutable instance state (`last_usage`), keeping the abstract seam pure.
 
 Embedding follows the same pattern: a configurable embedding client will be added alongside the RAG pipeline.
 
@@ -224,15 +238,39 @@ ADK's built-in tracing captures each agent's turns, tool calls, token usage, and
 
 ## Testing Decisions
 
-- **What makes a good test:** Test the external behavior of each module through its public interface. Do not test implementation details, LLM output quality, or ADK internals. Mock the LLM client at the network boundary for deterministic tests.
-- **MCP server:** Test that `search_knowledge` returns correctly shaped results given a known embedding in the database. End-to-end: seed one chunk, call the tool, assert the chunk appears in results.
-- **RAG pipeline:** Test that chunking preserves document boundaries, that embedding + storage round-trips correctly, and that similarity search returns the most relevant chunks first.
-- **FastAPI endpoints:** Test that `POST /api/chat` returns a 200 with SSE content-type, that it streams valid JSON events, and that error cases (missing question, empty response) return appropriate error codes.
-- **LLM client:** Test that the abstraction layer correctly routes to DeepSeek vs Claude based on the env var, and that tool-use loop retries on transient failures.
+- **What makes a good test:** Test the external behaviour of each module through its public interface. Do not test implementation details, LLM output quality, or ADK internals. Mock the LLM client at its abstract interface boundary (`LLMClient`); only the concrete client tests mock at the HTTP wire level, because their request/response parsing is where real bugs live.
+- **Stack:** `pytest` + `pytest-asyncio` + `pytest-httpx` (wire-level mock, transport module only).
+- **Transport seam:** HTTP is abstracted behind a `Transport` protocol. Production code uses `HttpTransport`; tests use `FakeTransport` (no HTTP mocking library needed outside the transport's own tests).
+- **DI seam:** `backend/main.py` exposes a `create_app(llm_client)` factory. Tests call `create_app(llm_client=FakeLLMClient())` — no module reassignment, no import-order footguns.
+- **Database:** None. All tests are pure unit tests with no Docker or pgvector dependency.
+- **Test layout:** Parallel to `backend/` at `tests/`, keeping test code out of Docker images and navigation noise free.
 
-Modules with tests: `backend/llm/` (protocol, clients, adapter), `rag/chunker.py`, `rag/query.py`, `mcp_server/tools.py`, `backend/routes.py`.
+### What is tested
 
-Prior art: these are standard service-level integration tests — no special patterns needed.
+| Module | How | What it covers |
+|---|---|---|
+| `frontend/.../title.ts` | `generateTitle` pure function | Empty string, whitespace, word-boundary truncation, trailing-punctuation trimming, single-word edge cases — 8 tests |
+| `frontend/.../store.ts` | `createConversationStore` | Auto-creation, localStorage CRUD, switch/delete/create, corrupt-data tolerance, last-conversation auto-create — 9 tests |
+| `frontend/.../Sidebar.tsx` | `render` + `fireEvent` | Renders list, highlights current, empty state, onNew/onSelect callbacks, trash buttons per row, confirm/cancel hidden on mount — 7 tests |
+| `frontend/.../ChatView.tsx` | `render` + `createSignal` mocks | Message rendering, send/stop buttons, disabled-during-loading, error banner, storage error dismiss, typing indicator logic — 11 tests |
+| `frontend/.../deriveTitle` (useChatStore internals) | Pure-function inline | First-user-message extraction from `UIMessage[]`, multi-part text, no-text-parts, truncation, whitespace fallback — 9 tests |
+
+Frontend tests: **46 tests across 5 files**, all passing. Runs in CI.
+
+| Module | How | What it covers |
+|---|---|---|
+| `backend/llm/protocol.py` | Pure-data assertions | `Message`, `Usage`, `LLMResponse`, `LLMError` construction; abstract class guard |
+| `backend/llm/transport.py` | `pytest-httpx` | `send` and `send_stream` return/error behaviour, `_parse_error_body` edge cases, `close` idempotency |
+| `backend/llm/openai.py` | `FakeTransport` | Request body shape (system→messages[0]), SSE deltas, `[DONE]`, usage from final chunk, 4xx→`LLMError` |
+| `backend/llm/anthropic.py` | `FakeTransport` | Request body shape (system in separate field), SSE events (`content_block_delta`, `message_start`, `message_delta`), error handling |
+| `backend/llm/factory.py` | Fixture-based env override | Returns `OpenAIClient`/`AnthropicClient` by provider; `ValueError` on unknown |
+| `backend/llm/adk_adapter.py` | `FakeLLMClient` + real ADK types | `LlmRequest`→`Message[]` conversion, streaming deltas, usage metadata, system instruction extraction, function-call parts |
+| `backend/config.py` | Fixture-based env override | Defaults, `database_url` property, `extra='ignore'` |
+| `backend/main.py` | `create_app(llm_client=FakeLLMClient())` + `TestClient` | `GET /api/health` returns 200 JSON; `POST /api/chat` returns 200 |
+
+### Modules not yet tested
+
+`rag/`, `mcp_server/`, and `agents/` don't exist in the codebase yet. Their tests will be added when those modules are implemented, following the same approach: mock at the abstract boundary, pure unit tests, no database dependency for business logic.
 
 ## Out of Scope
 

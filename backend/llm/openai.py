@@ -3,21 +3,8 @@
 import json
 from typing import AsyncIterable
 
-import httpx
-
-from backend.llm.protocol import LLMClient, LLMError, LLMResponse, Message, Usage
-
-
-def _parse_error_body(body: bytes) -> str:
-    """Extract a user-facing error message from raw API response bytes."""
-    try:
-        data = json.loads(body)
-        err = data.get("error", {})
-        if isinstance(err, dict):
-            return err.get("message", str(err))
-        return str(err)
-    except (json.JSONDecodeError, AttributeError, TypeError):
-        return body.decode("utf-8", errors="replace")[:500]
+from backend.llm.protocol import LLMClient, LLMResponse, Message, Usage
+from backend.llm.transport import HttpTransport, Transport
 
 
 class OpenAIClient(LLMClient):
@@ -30,13 +17,13 @@ class OpenAIClient(LLMClient):
         api_key: str,
         max_tokens: int = 4096,
         timeout: float = 120.0,
+        transport: Transport | None = None,
     ):
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.max_tokens = max_tokens
-        self._client = httpx.AsyncClient(timeout=timeout)
-        self.last_usage: Usage | None = None
+        self._transport = transport or HttpTransport(timeout=timeout)
 
     async def generate(
         self,
@@ -45,16 +32,11 @@ class OpenAIClient(LLMClient):
         **kwargs,
     ) -> LLMResponse:
         body = self._build_body(messages, system, stream=False)
-        response = await self._client.post(
+        response = await self._transport.send(
             f"{self.base_url}/chat/completions",
-            json=body,
             headers=self._headers(),
+            json_body=body,
         )
-        if response.status_code >= 400:
-            raise LLMError(
-                status=response.status_code,
-                message=_parse_error_body(await response.aread()),
-            )
 
         data = response.json()
         choice = data.get("choices", [{}])[0]
@@ -78,35 +60,26 @@ class OpenAIClient(LLMClient):
         messages: list[Message],
         system: str | None = None,
         **kwargs,
-    ) -> AsyncIterable[str]:
+    ) -> AsyncIterable[tuple[str, Usage | None]]:
         body = self._build_body(messages, system, stream=True)
-        async with self._client.stream(
-            "POST",
+        buffer = ""
+        async for chunk in self._transport.send_stream(
             f"{self.base_url}/chat/completions",
-            json=body,
             headers=self._headers(),
-        ) as response:
-            if response.status_code >= 400:
-                raise LLMError(
-                    status=response.status_code,
-                    message=_parse_error_body(await response.aread()),
-                )
-            buffer = ""
-            async for chunk in response.aiter_text():
-                buffer += chunk
-                while "\n\n" in buffer:
-                    event_block, buffer = buffer.split("\n\n", 1)
-                    deltas, usage = self._parse_sse_event(event_block)
-                    if usage:
-                        self.last_usage = usage
-                    for delta in deltas:
-                        yield delta
-            if buffer.strip():
-                deltas, usage = self._parse_sse_event(buffer)
-                if usage:
-                    self.last_usage = usage
+            json_body=body,
+        ):
+            buffer += chunk
+            while "\n\n" in buffer:
+                event_block, buffer = buffer.split("\n\n", 1)
+                deltas, usage = self._parse_sse_event(event_block)
                 for delta in deltas:
-                    yield delta
+                    yield delta, usage
+                if not deltas and usage is not None:
+                    yield "", usage
+        if buffer.strip():
+            deltas, usage = self._parse_sse_event(buffer)
+            for delta in deltas:
+                yield delta, usage
 
     def _headers(self) -> dict:
         return {
@@ -133,7 +106,6 @@ class OpenAIClient(LLMClient):
             "stream": stream,
         }
 
-    @staticmethod
     @staticmethod
     def _parse_sse_event(
         event_block: str,

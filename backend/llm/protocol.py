@@ -56,7 +56,6 @@ class LLMClient(ABC):
     """
 
     model: str
-    last_usage: Usage | None = None
 
     @abstractmethod
     async def generate(
@@ -74,8 +73,12 @@ class LLMClient(ABC):
         messages: list[Message],
         system: str | None = None,
         **kwargs,
-    ) -> AsyncIterable[str]:
-        """Streaming generation. Yields text deltas as they arrive."""
+    ) -> AsyncIterable[tuple[str, Usage | None]]:
+        """Streaming generation. Yields ``(text_delta, usage)`` tuples.
+
+        Most yields carry ``usage=None`` — the final chunk is guaranteed
+        to carry the accumulated ``Usage`` when the API provides it.
+        """
         ...
         if False:  # pragma: no cover — make the generator type-check
-            yield ""
+            yield "", None
