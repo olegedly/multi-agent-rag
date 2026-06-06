@@ -36,6 +36,7 @@ class OpenAIClient(LLMClient):
         self.api_key = api_key
         self.max_tokens = max_tokens
         self._client = httpx.AsyncClient(timeout=timeout)
+        self.last_usage: Usage | None = None
 
     async def generate(
         self,
@@ -95,10 +96,16 @@ class OpenAIClient(LLMClient):
                 buffer += chunk
                 while "\n\n" in buffer:
                     event_block, buffer = buffer.split("\n\n", 1)
-                    for delta in self._parse_sse_event(event_block):
+                    deltas, usage = self._parse_sse_event(event_block)
+                    if usage:
+                        self.last_usage = usage
+                    for delta in deltas:
                         yield delta
             if buffer.strip():
-                for delta in self._parse_sse_event(buffer):
+                deltas, usage = self._parse_sse_event(buffer)
+                if usage:
+                    self.last_usage = usage
+                for delta in deltas:
                     yield delta
 
     def _headers(self) -> dict:
@@ -127,9 +134,17 @@ class OpenAIClient(LLMClient):
         }
 
     @staticmethod
-    def _parse_sse_event(event_block: str) -> list[str]:
-        """Parse one SSE event block and return any text deltas."""
+    @staticmethod
+    def _parse_sse_event(
+        event_block: str,
+    ) -> tuple[list[str], Usage | None]:
+        """Parse one SSE event block.
+
+        Returns (text_deltas, usage) — usage is populated from the final
+        streaming event that carries token counts.
+        """
         deltas: list[str] = []
+        usage: Usage | None = None
         data_line = ""
 
         for line in event_block.splitlines():
@@ -140,12 +155,12 @@ class OpenAIClient(LLMClient):
                 data_line = ""
 
         if not data_line or data_line == "[DONE]":
-            return deltas
+            return deltas, usage
 
         try:
             payload = json.loads(data_line)
         except json.JSONDecodeError:
-            return deltas
+            return deltas, usage
 
         for choice in payload.get("choices", []):
             delta = choice.get("delta", {})
@@ -153,4 +168,12 @@ class OpenAIClient(LLMClient):
             if content:
                 deltas.append(content)
 
-        return deltas
+        # The final streaming event carries usage metadata
+        raw_usage = payload.get("usage")
+        if raw_usage:
+            usage = Usage(
+                input_tokens=raw_usage.get("prompt_tokens", 0),
+                output_tokens=raw_usage.get("completion_tokens", 0),
+            )
+
+        return deltas, usage

@@ -7,7 +7,7 @@ from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
-from backend.llm.protocol import LLMClient, Message
+from backend.llm.protocol import LLMClient, Message, Usage
 
 
 def _to_protocol_messages(
@@ -74,6 +74,17 @@ def _extract_system(llm_request: LlmRequest) -> str | None:
     return str(raw)
 
 
+def _usage_to_adk(usage: Usage | None) -> types.GenerateContentResponseUsageMetadata | None:
+    """Convert our Usage dataclass to ADK's usage metadata type."""
+    if usage is None:
+        return None
+    return types.GenerateContentResponseUsageMetadata(
+        prompt_token_count=usage.input_tokens,
+        candidates_token_count=usage.output_tokens,
+        total_token_count=usage.input_tokens + usage.output_tokens,
+    )
+
+
 class AdkLlmAdapter(BaseLlm):
     """Wraps any LLMClient for use as an ADK model.
 
@@ -104,19 +115,23 @@ class AdkLlmAdapter(BaseLlm):
                     ),
                     partial=True,
                 )
+            usage_adk = _usage_to_adk(self._client.last_usage)
             yield LlmResponse(
                 content=types.Content(
                     role="model",
                     parts=[types.Part(text=full_text)],
                 ),
                 partial=False,
+                usage_metadata=usage_adk,
             )
         else:
             response = await self._client.generate(messages, system=system)
+            usage_adk = _usage_to_adk(response.usage)
             yield LlmResponse(
                 content=types.Content(
                     role="model",
                     parts=[types.Part(text=response.content)],
                 ),
                 partial=False,
+                usage_metadata=usage_adk,
             )
