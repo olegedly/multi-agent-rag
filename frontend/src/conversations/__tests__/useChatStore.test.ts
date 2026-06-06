@@ -179,12 +179,15 @@ describe("ConversationStore", () => {
   });
 
   it("tolerates corrupt localStorage gracefully", () => {
+    const origWarn = console.warn;
+    console.warn = () => {};
     localStorage.setItem("conversation:bad", "not valid json");
     let store2: ConversationStore;
     createRoot((rootDispose) => {
       store2 = createConversationStore();
       return rootDispose;
     });
+    console.warn = origWarn;
     // Should still have at least the auto-created one
     expect(store2!.conversations().length).toBeGreaterThanOrEqual(1);
   });
