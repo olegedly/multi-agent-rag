@@ -13,7 +13,10 @@ app = FastAPI(title=settings.app_name)
 # LLM — injected via environment, not hardcoded
 # ---------------------------------------------------------------------------
 
-llm_client = create_llm_client()
+# DI seam: reassign get_llm_client in tests to inject a fake client
+get_llm_client = create_llm_client
+
+llm_client = get_llm_client()
 llm_model = AdkLlmAdapter(llm_client)
 
 root_agent = Agent(

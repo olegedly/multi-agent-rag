@@ -224,15 +224,27 @@ ADK's built-in tracing captures each agent's turns, tool calls, token usage, and
 
 ## Testing Decisions
 
-- **What makes a good test:** Test the external behavior of each module through its public interface. Do not test implementation details, LLM output quality, or ADK internals. Mock the LLM client at the network boundary for deterministic tests.
-- **MCP server:** Test that `search_knowledge` returns correctly shaped results given a known embedding in the database. End-to-end: seed one chunk, call the tool, assert the chunk appears in results.
-- **RAG pipeline:** Test that chunking preserves document boundaries, that embedding + storage round-trips correctly, and that similarity search returns the most relevant chunks first.
-- **FastAPI endpoints:** Test that `POST /api/chat` returns a 200 with SSE content-type, that it streams valid JSON events, and that error cases (missing question, empty response) return appropriate error codes.
-- **LLM client:** Test that the abstraction layer correctly routes to DeepSeek vs Claude based on the env var, and that tool-use loop retries on transient failures.
+- **What makes a good test:** Test the external behaviour of each module through its public interface. Do not test implementation details, LLM output quality, or ADK internals. Mock the LLM client at its abstract interface boundary (`LLMClient`); only the concrete client tests mock at the HTTP wire level, because their request/response parsing is where real bugs live.
+- **Stack:** `pytest` + `pytest-asyncio` + `pytest-httpx` (wire-level mock, concrete clients only).
+- **DI seam:** `backend/main.py` exposes a module-level callable `get_llm_client = create_llm_client`. Tests reassign it to a `FakeLLMClient` before the app is imported — no monkey-patching, no import-order footguns.
+- **Database:** None. All tests are pure unit tests with no Docker or pgvector dependency.
+- **Test layout:** Parallel to `backend/` at `tests/`, keeping test code out of Docker images and navigation noise free.
 
-Modules with tests: `backend/llm/` (protocol, clients, adapter), `rag/chunker.py`, `rag/query.py`, `mcp_server/tools.py`, `backend/routes.py`.
+### What is tested
 
-Prior art: these are standard service-level integration tests — no special patterns needed.
+| Module | How | What it covers |
+|---|---|---|
+| `backend/llm/protocol.py` | Pure-data assertions | `Message`, `Usage`, `LLMResponse`, `LLMError` construction; abstract class guard |
+| `backend/llm/openai.py` | `pytest-httpx` | Request body shape (system→messages[0]), SSE deltas, `[DONE]`, usage from final chunk, 4xx→`LLMError`, `_parse_error_body` edge cases |
+| `backend/llm/anthropic.py` | `pytest-httpx` | Request body shape (system in separate field), SSE events (`content_block_delta`, `message_start`, `message_delta`), error handling |
+| `backend/llm/factory.py` | Fixture-based env override | Returns `OpenAIClient`/`AnthropicClient` by provider; `ValueError` on unknown |
+| `backend/llm/adk_adapter.py` | `FakeLLMClient` + real ADK types | `LlmRequest`→`Message[]` conversion, streaming deltas, usage metadata, system instruction extraction, function-call parts |
+| `backend/config.py` | Fixture-based env override | Defaults, `database_url` property, `extra='ignore'` |
+| `backend/main.py` | `TestClient` + `FakeLLMClient` | `GET /api/health` returns 200 JSON; `POST /api/chat` returns 200 |
+
+### Modules not yet tested
+
+`rag/`, `mcp_server/`, and `agents/` don't exist in the codebase yet. Their tests will be added when those modules are implemented, following the same approach: mock at the abstract boundary, pure unit tests, no database dependency for business logic.
 
 ## Out of Scope
 

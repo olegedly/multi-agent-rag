@@ -12,5 +12,26 @@ dependencies = [
     "sqlalchemy>=2.0.50",
 ]
 
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-httpx>=0.30.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = [
+    # ADK internals — upstream will remove BaseAgentConfig in a future release
+    "ignore:BaseAgentConfig is deprecated:DeprecationWarning",
+    # TestClient / httpx — StarletteDeprecationWarning (inherits UserWarning, not DeprecationWarning)
+    "ignore::UserWarning:fastapi.testclient",
+    # ADK experimental auth — works correctly, labelled experimental by upstream
+    "ignore::UserWarning:ag_ui_adk.adk_agent",
+    "ignore::UserWarning:google.adk.auth.credential_service",
+]
+markers = ["httpx_mock: marks tests that use pytest-httpx (deselect with '-m \"not httpx_mock\"')"]
+
 [tool.fastapi]
 entrypoint = "backend.main:app"
