@@ -56,6 +56,7 @@ class LLMClient(ABC):
     """
 
     model: str
+    last_usage: Usage | None = None
 
     @abstractmethod
     async def generate(
