@@ -1,15 +1,16 @@
 """Tests for the Anthropic-format LLM client.
 
-Uses pytest-httpx to mock HTTP responses, verifying Anthropic message
-format request construction and SSE parsing.
+Uses FakeTransport to mock HTTP at the transport seam — no pytest-httpx
+dependency. Tests verify request/response parsing logic.
 """
 
 import json
 
 import pytest
 
-from backend.llm.anthropic import AnthropicClient, _parse_error_body
+from backend.llm.anthropic import AnthropicClient
 from backend.llm.protocol import LLMError, Message
+from tests.fakes import FakeTransport
 
 
 # ── Fixture ──────────────────────────────────────────────────────────────────
@@ -75,14 +76,16 @@ class TestRequestBody:
 
 
 class TestGenerate:
-    async def test_returns_content_and_usage(
-        self, client: AnthropicClient, httpx_mock
-    ) -> None:
-        httpx_mock.add_response(
-            json={
+    async def test_returns_content_and_usage(self) -> None:
+        transport = FakeTransport.with_body(
+            json.dumps({
                 "content": [{"type": "text", "text": "Hello!"}],
                 "usage": {"input_tokens": 5, "output_tokens": 10},
-            }
+            }).encode()
+        )
+        client = AnthropicClient(
+            model="m", base_url="https://api.test/v1", api_key="sk-test",
+            transport=transport,
         )
 
         response = await client.generate(
@@ -93,16 +96,18 @@ class TestGenerate:
         assert response.usage.input_tokens == 5
         assert response.usage.output_tokens == 10
 
-    async def test_concatenates_multiple_text_blocks(
-        self, client: AnthropicClient, httpx_mock
-    ) -> None:
-        httpx_mock.add_response(
-            json={
+    async def test_concatenates_multiple_text_blocks(self) -> None:
+        transport = FakeTransport.with_body(
+            json.dumps({
                 "content": [
                     {"type": "text", "text": "Part 1. "},
                     {"type": "text", "text": "Part 2."},
                 ],
-            }
+            }).encode()
+        )
+        client = AnthropicClient(
+            model="m", base_url="https://api.test/v1", api_key="sk-test",
+            transport=transport,
         )
 
         response = await client.generate(
@@ -110,12 +115,14 @@ class TestGenerate:
         )
         assert response.content == "Part 1. Part 2."
 
-    async def test_raises_llm_error_on_4xx(
-        self, client: AnthropicClient, httpx_mock
-    ) -> None:
-        httpx_mock.add_response(
-            status_code=401,
-            json={"error": {"message": "Invalid API key"}},
+    async def test_raises_llm_error_on_4xx(self) -> None:
+        transport = FakeTransport.with_error(
+            status=401,
+            body=json.dumps({"error": {"message": "Invalid API key"}}).encode(),
+        )
+        client = AnthropicClient(
+            model="m", base_url="https://api.test/v1", api_key="sk-test",
+            transport=transport,
         )
 
         with pytest.raises(LLMError) as excinfo:
@@ -124,16 +131,18 @@ class TestGenerate:
             )
         assert excinfo.value.status == 401
 
-    async def test_posts_to_correct_url(
-        self, client: AnthropicClient, httpx_mock
-    ) -> None:
-        httpx_mock.add_response(json={"content": []})
+    async def test_posts_to_correct_url(self) -> None:
+        transport = FakeTransport.with_body(json.dumps({"content": []}).encode())
+        client = AnthropicClient(
+            model="m", base_url="https://api.test.com/v1", api_key="sk-test",
+            transport=transport,
+        )
 
         await client.generate(messages=[Message(role="user", content="hi")])
 
-        request = httpx_mock.get_request()
-        assert request is not None
-        assert str(request.url) == "https://api.test.com/v1/messages"
+        assert len(transport.sent_requests) == 1
+        url, _, _ = transport.sent_requests[0]
+        assert url == "https://api.test.com/v1/messages"
 
 
 # ── Streaming generate ───────────────────────────────────────────────────────
@@ -151,12 +160,11 @@ class TestGenerateStream:
         "",
     ]
 
-    async def test_yields_text_deltas(
-        self, client: AnthropicClient, httpx_mock
-    ) -> None:
-        httpx_mock.add_response(
-            text="\n".join(self.SSE_EVENTS),
-            headers={"content-type": "text/event-stream"},
+    async def test_yields_text_deltas(self) -> None:
+        transport = FakeTransport.with_stream(["\n".join(self.SSE_EVENTS)])
+        client = AnthropicClient(
+            model="m", base_url="https://api.test/v1", api_key="sk-test",
+            transport=transport,
         )
 
         deltas = []
@@ -167,10 +175,12 @@ class TestGenerateStream:
 
         assert deltas == ["Hello", " world"]
 
-    async def test_records_usage_from_message_delta(
-        self, client: AnthropicClient, httpx_mock
-    ) -> None:
-        httpx_mock.add_response(text="\n".join(self.SSE_EVENTS))
+    async def test_records_usage_from_message_delta(self) -> None:
+        transport = FakeTransport.with_stream(["\n".join(self.SSE_EVENTS)])
+        client = AnthropicClient(
+            model="m", base_url="https://api.test/v1", api_key="sk-test",
+            transport=transport,
+        )
 
         async for _ in client.generate_stream(
             messages=[Message(role="user", content="hi")]
@@ -181,9 +191,7 @@ class TestGenerateStream:
         assert client.last_usage.input_tokens == 3
         assert client.last_usage.output_tokens == 2
 
-    async def test_handles_message_start_event(
-        self, client: AnthropicClient, httpx_mock
-    ) -> None:
+    async def test_handles_message_start_event(self) -> None:
         """message_start can carry initial text in the content blocks."""
         events = [
             'data: {"type":"message_start","message":{"content":[{"type":"text","text":"Initial "}]}}',
@@ -193,7 +201,11 @@ class TestGenerateStream:
             "data: [DONE]",
             "",
         ]
-        httpx_mock.add_response(text="\n".join(events))
+        transport = FakeTransport.with_stream(["\n".join(events)])
+        client = AnthropicClient(
+            model="m", base_url="https://api.test/v1", api_key="sk-test",
+            transport=transport,
+        )
 
         deltas = []
         async for chunk in client.generate_stream(
@@ -203,12 +215,14 @@ class TestGenerateStream:
 
         assert deltas == ["Initial ", "rest"]
 
-    async def test_raises_llm_error_on_4xx(
-        self, client: AnthropicClient, httpx_mock
-    ) -> None:
-        httpx_mock.add_response(
-            status_code=429,
-            json={"error": {"message": "Too many requests"}},
+    async def test_raises_llm_error_on_4xx(self) -> None:
+        transport = FakeTransport.with_error(
+            status=429,
+            body=json.dumps({"error": {"message": "Too many requests"}}).encode(),
+        )
+        client = AnthropicClient(
+            model="m", base_url="https://api.test/v1", api_key="sk-test",
+            transport=transport,
         )
 
         with pytest.raises(LLMError) as excinfo:
@@ -218,10 +232,12 @@ class TestGenerateStream:
                 pass
         assert excinfo.value.status == 429
 
-    async def test_handles_empty_stream(
-        self, client: AnthropicClient, httpx_mock
-    ) -> None:
-        httpx_mock.add_response(text="data: [DONE]\n\n")
+    async def test_handles_empty_stream(self) -> None:
+        transport = FakeTransport.with_stream(["data: [DONE]\n\n"])
+        client = AnthropicClient(
+            model="m", base_url="https://api.test/v1", api_key="sk-test",
+            transport=transport,
+        )
 
         deltas = []
         async for chunk in client.generate_stream(
