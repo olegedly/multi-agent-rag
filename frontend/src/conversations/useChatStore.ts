@@ -1,10 +1,8 @@
 import { onCleanup, onMount } from "solid-js";
 import { fetchServerSentEvents, useChat } from "@tanstack/ai-solid";
 import type { UIMessage } from "@tanstack/ai-client";
-import {
-  createConversationStore,
-  type ConversationStore,
-} from "./store";
+import { createConversationStore } from "./store";
+import { generateTitle } from "./title";
 
 const SAVE_KEY = "chat:hasUnsaved";
 
@@ -74,8 +72,7 @@ export function useChatStore() {
     const msgs = chat.messages();
     if (msgs.length === 0) {
       // First message — set title before sending
-      const title = deriveTitleFromText(text);
-      store.updateCurrentTitle(title);
+      store.updateCurrentTitle(generateTitle(text));
     }
     chat.sendMessage(text);
   };
@@ -119,16 +116,6 @@ export function useChatStore() {
   };
 }
 
-function deriveTitleFromText(text: string): string {
-  const trimmed = text.trim();
-  if (trimmed.length === 0) return "New conversation";
-  if (trimmed.length <= 50) return trimmed;
-  const truncated = trimmed.slice(0, 50);
-  const lastSpace = truncated.lastIndexOf(" ");
-  const result = lastSpace > 0 ? truncated.slice(0, lastSpace) : truncated;
-  return result.replace(/[\s\p{P}]+$/u, "");
-}
-
 function deriveTitle(msgs: UIMessage[]): string | null {
   const firstUser = msgs.find((m) => m.role === "user");
   if (!firstUser) return null;
@@ -136,5 +123,6 @@ function deriveTitle(msgs: UIMessage[]): string | null {
     .filter((p) => p.type === "text")
     .map((p) => p.content)
     .join(" ");
-  return deriveTitleFromText(text);
+  if (text.length === 0) return null;
+  return generateTitle(text);
 }
