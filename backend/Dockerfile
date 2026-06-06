@@ -29,6 +29,9 @@ COPY backend/ /app/backend/
 
 WORKDIR /app
 
+# pyproject.toml so `fastapi run` can read [tool.fastapi] entrypoint
+COPY --from=deps /install/pyproject.toml ./
+
 EXPOSE 8000
 
-CMD ["fastapi", "run", "backend.main:app", "--port", "8000", "--host", "0.0.0.0"]
+CMD ["fastapi", "run", "--port", "8000", "--host", "0.0.0.0"]
