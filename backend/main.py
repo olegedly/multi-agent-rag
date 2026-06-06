@@ -95,4 +95,21 @@ def create_app(
 
 
 # Module-level ``app`` for ``fastapi dev`` and ``fastapi run`` compatibility
-app = create_app()
+_app: FastAPI | None = None
+
+
+def __getattr__(name: str) -> FastAPI:
+    """Lazy-init ``app`` so importing just ``backend.main`` (or its submodules)
+    on CI doesn't crash from missing ``.env`` / env vars.
+
+    ``fastapi dev``, ``fastapi run``, and ``uvicorn backend.main:app`` all
+    trigger ``__getattr__("app")``, which creates the app on first access.
+    Tests that ``from backend.main import create_app`` never trigger this.
+    """
+    if name == "app":
+        global _app
+        if _app is None:
+            _app = create_app()
+        return _app
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
