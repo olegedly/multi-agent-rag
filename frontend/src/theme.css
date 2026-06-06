@@ -1,0 +1,39 @@
+:root {
+  --bg-primary: #f8fafc;
+  --bg-secondary: #ffffff;
+  --text-primary: #1e293b;
+  --text-secondary: #64748b;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --border: #e2e8f0;
+  --hover: #f1f5f9;
+  --danger: #ef4444;
+  --danger-hover: #dc2626;
+  --bg-chat-input: #f1f5f9;
+  --bg-user-bubble: #3b82f6;
+  --text-user-bubble: #ffffff;
+  --bg-assistant-bubble: #ffffff;
+  --text-assistant-bubble: #1e293b;
+  --sidebar-bg: #ffffff;
+  --header-bg: #ffffff;
+}
+
+[data-theme="dark"] {
+  --bg-primary: #0f172a;
+  --bg-secondary: #1e293b;
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --accent: #60a5fa;
+  --accent-hover: #93bbfd;
+  --border: #334155;
+  --hover: #1e293b;
+  --danger: #f87171;
+  --danger-hover: #ef4444;
+  --bg-chat-input: #1e293b;
+  --bg-user-bubble: #60a5fa;
+  --text-user-bubble: #0f172a;
+  --bg-assistant-bubble: #1e293b;
+  --text-assistant-bubble: #f1f5f9;
+  --sidebar-bg: #1e293b;
+  --header-bg: #1e293b;
+}
