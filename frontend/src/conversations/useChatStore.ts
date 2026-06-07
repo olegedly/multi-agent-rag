@@ -3,6 +3,7 @@ import { fetchServerSentEvents, useChat } from "@tanstack/ai-solid";
 import type { UIMessage } from "@tanstack/ai-client";
 import { createConversationStore } from "./store";
 import { generateTitle } from "./title";
+import { resilientFetch } from "./resilientFetch";
 
 const SAVE_KEY = "chat:hasUnsaved";
 
@@ -10,7 +11,9 @@ export function useChatStore() {
   const store = createConversationStore();
 
   const chat = useChat({
-    connection: fetchServerSentEvents("/api/chat"),
+    connection: fetchServerSentEvents("/api/chat", {
+      fetchClient: resilientFetch,
+    }),
   });
 
   // Save current messages when switching conversations

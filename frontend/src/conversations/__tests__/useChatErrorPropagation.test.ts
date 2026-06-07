@@ -1,21 +1,118 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { createRoot } from "solid-js";
 import { useChat, fetchServerSentEvents } from "@tanstack/ai-solid";
+import { resilientFetch } from "../resilientFetch";
+
+/**
+ * CI/PROD BUG: jsdom's Response.clone() implementation can fail, and the
+ * library's responseToSSEChunks uses an empty catch {} that silently
+ * swallows the failure — losing the server's error detail.
+ *
+ * Fix: a custom fetchClient in fetchServerSentEvents options that pre-reads
+ * the response body on non-ok and patches response.clone to return a
+ * plain object with working json().
+ */
 
 describe("useChat error propagation", () => {
-  beforeEach(() => {
-    // Reset fetch before each test
-    delete (globalThis as any).fetch;
-  });
-
   afterEach(() => {
-    delete (globalThis as any).fetch;
+    delete (globalThis as Record<string, unknown>).fetch;
   });
 
-  it("fetchServerSentEvents: 422 detail reaches error signal", async () => {
-    const detail = "Too many user messages (3). Maximum allowed is 2.";
+  // ── RED: proves the bug without resilientFetch ─────────────────────
 
-    // Mock fetch to return 422
+  it("RED: detail is DROPPED when Response.clone().json() fails", async () => {
+    const detail = "Daily demo budget reached. Try again tomorrow.";
+
+    // Simulate jsdom where clone() returns something whose json() rejects
+    globalThis.fetch = (() => {
+      const bodyText = JSON.stringify({ detail });
+      let bodyConsumed = false;
+      return Promise.resolve({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: new Headers({ "Content-Type": "application/json" }),
+        clone() {
+          bodyConsumed = true;
+          return {
+            ok: false,
+            status: 429,
+            json: () => Promise.reject(new Error("Body already consumed")),
+          } as unknown as Response;
+        },
+        text: () => (bodyConsumed
+          ? Promise.reject(new Error("Body already consumed"))
+          : Promise.resolve(bodyText)),
+      }) as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    const result = await new Promise<{ errorMsg: string | null }>((resolve) => {
+      createRoot((dispose) => {
+        const chat = useChat({
+          connection: fetchServerSentEvents("/api/chat"),
+        });
+        queueMicrotask(async () => {
+          try { await chat.sendMessage("Hello"); } catch {}
+          resolve({ errorMsg: chat.error()?.message ?? null });
+          dispose();
+        });
+      });
+    });
+
+    // BUG: clone().json() fails → details lost → only "HTTP error! status: 429"
+    expect(result.errorMsg).not.toContain("Daily demo budget");
+  });
+
+  // ── GREEN: fix with resilientFetch ─────────────────────────────────
+
+  it("GREEN: resilientFetch preserves detail when clone fails", async () => {
+    const detail = "Daily demo budget reached. Try again tomorrow.";
+
+    // Same broken clone simulation as above
+    globalThis.fetch = (() => {
+      const bodyText = JSON.stringify({ detail });
+      let bodyConsumed = false;
+      return Promise.resolve({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        headers: new Headers({ "Content-Type": "application/json" }),
+        clone() {
+          bodyConsumed = true;
+          return {
+            ok: false,
+            status: 429,
+            json: () => Promise.reject(new Error("Body already consumed")),
+          } as unknown as Response;
+        },
+        text: () => (bodyConsumed
+          ? Promise.reject(new Error("Body already consumed"))
+          : Promise.resolve(bodyText)),
+      }) as unknown as Response;
+    }) as unknown as typeof fetch;
+
+    const result = await new Promise<{ errorMsg: string | null }>((resolve) => {
+      createRoot((dispose) => {
+        const chat = useChat({
+          connection: fetchServerSentEvents("/api/chat", {
+            fetchClient: resilientFetch,
+          }),
+        });
+        queueMicrotask(async () => {
+          try { await chat.sendMessage("Hello"); } catch {}
+          resolve({ errorMsg: chat.error()?.message ?? null });
+          dispose();
+        });
+      });
+    });
+
+    expect(result.errorMsg).toContain("Daily demo budget");
+  });
+
+  // ── Happy path: standard Response (clone works normally) ───────────
+
+  it("422 detail reaches error signal with standard Response", async () => {
+    const detail = "Too many user messages (3). Maximum allowed is 2.";
     globalThis.fetch = (() =>
       Promise.resolve(
         new Response(JSON.stringify({ detail }), {
@@ -23,68 +120,29 @@ describe("useChat error propagation", () => {
           statusText: "Unprocessable Entity",
           headers: { "Content-Type": "application/json" },
         }),
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
 
-    const result = await new Promise<{ errorMsg: string | null }>(
-      (resolve) => {
-        createRoot((dispose) => {
-          const chat = useChat({
-            connection: fetchServerSentEvents("/api/chat"),
-          });
-
-          queueMicrotask(async () => {
-            try {
-              await chat.sendMessage("Hello");
-            } catch {
-              // sendMessage may not reject (library catches internally)
-            }
-            resolve({ errorMsg: chat.error()?.message ?? null });
-            dispose();
-          });
+    const result = await new Promise<{ errorMsg: string | null }>((resolve) => {
+      createRoot((dispose) => {
+        const chat = useChat({
+          connection: fetchServerSentEvents("/api/chat", {
+            fetchClient: resilientFetch,
+          }),
         });
-      },
-    );
+        queueMicrotask(async () => {
+          try { await chat.sendMessage("Hello"); } catch {}
+          resolve({ errorMsg: chat.error()?.message ?? null });
+          dispose();
+        });
+      });
+    });
 
     expect(result.errorMsg).toContain("Too many user messages");
   });
 
-  it("fetchServerSentEvents: 429 detail reaches error signal", async () => {
-    const detail = "Daily demo budget reached. Try again tomorrow.";
+  // ── Fallback: non-JSON error body ──────────────────────────────────
 
-    globalThis.fetch = (() =>
-      Promise.resolve(
-        new Response(JSON.stringify({ detail }), {
-          status: 429,
-          statusText: "Too Many Requests",
-          headers: { "Content-Type": "application/json" },
-        }),
-      )) as typeof fetch;
-
-    const result = await new Promise<{ errorMsg: string | null }>(
-      (resolve) => {
-        createRoot((dispose) => {
-          const chat = useChat({
-            connection: fetchServerSentEvents("/api/chat"),
-          });
-
-          queueMicrotask(async () => {
-            try {
-              await chat.sendMessage("Hello");
-            } catch {
-              // ignore
-            }
-            resolve({ errorMsg: chat.error()?.message ?? null });
-            dispose();
-          });
-        });
-      },
-    );
-
-    expect(result.errorMsg).toContain("Daily demo budget reached");
-  });
-
-  it("fetchServerSentEvents: error without detail still has status info", async () => {
-    // Server returns non-ok without JSON body or detail
+  it("error without detail still has status info", async () => {
     globalThis.fetch = (() =>
       Promise.resolve(
         new Response("Internal error", {
@@ -92,29 +150,23 @@ describe("useChat error propagation", () => {
           statusText: "Internal Server Error",
           headers: { "Content-Type": "text/plain" },
         }),
-      )) as typeof fetch;
+      )) as unknown as typeof fetch;
 
-    const result = await new Promise<{ errorMsg: string | null }>(
-      (resolve) => {
-        createRoot((dispose) => {
-          const chat = useChat({
-            connection: fetchServerSentEvents("/api/chat"),
-          });
-
-          queueMicrotask(async () => {
-            try {
-              await chat.sendMessage("Hello");
-            } catch {
-              // ignore
-            }
-            resolve({ errorMsg: chat.error()?.message ?? null });
-            dispose();
-          });
+    const result = await new Promise<{ errorMsg: string | null }>((resolve) => {
+      createRoot((dispose) => {
+        const chat = useChat({
+          connection: fetchServerSentEvents("/api/chat", {
+            fetchClient: resilientFetch,
+          }),
         });
-      },
-    );
+        queueMicrotask(async () => {
+          try { await chat.sendMessage("Hello"); } catch {}
+          resolve({ errorMsg: chat.error()?.message ?? null });
+          dispose();
+        });
+      });
+    });
 
-    // Should still have the HTTP error prefix with status
     expect(result.errorMsg).toContain("HTTP error");
     expect(result.errorMsg).toContain("500");
   });
