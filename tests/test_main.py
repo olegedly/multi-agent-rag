@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.config import Settings
+from backend.corpus_config import CorporaConfig
 from backend.main import create_app
 from tests.fakes import FakeLLMClient
 
@@ -18,12 +19,16 @@ SAMPLE_CORPORA = [
         "slug": "mcp-spec",
         "name": "MCP Specification",
         "description": "MCP spec and ADK documentation",
+        "chunker": "paragraph",
+        "documents": "corpora/mcp-spec/*.md",
     },
     {
         "id": "b2c3d4e5-2345-6789-abcd-ef0123456789",
         "slug": "eu-ai-act",
         "name": "EU AI Act",
         "description": "European Union AI regulation",
+        "chunker": "paragraph",
+        "documents": "corpora/eu-ai-act/*.md",
     },
 ]
 
@@ -38,7 +43,7 @@ def client(tmp_path):
         settings=Settings(
             demo_budget_file=str(tmp_path / "budget.json"),
         ),
-        corpora=SAMPLE_CORPORA,
+        corpora_config=CorporaConfig.from_dicts(SAMPLE_CORPORA),
     )
     with TestClient(app) as c:
         yield c
@@ -89,6 +94,8 @@ class TestCorporaEndpoint:
             assert "slug" in entry
             assert "name" in entry
             assert "description" in entry
+            assert "chunker" in entry
+            assert "documents" in entry
 
     def test_empty_when_no_corpora_configured(self, tmp_path) -> None:
         app = create_app(
@@ -96,7 +103,7 @@ class TestCorporaEndpoint:
             settings=Settings(
                 demo_budget_file=str(tmp_path / "budget.json"),
             ),
-            corpora=[],
+            corpora_config=CorporaConfig.from_dicts([]),
         )
         with TestClient(app) as c:
             response = c.get("/api/corpora")

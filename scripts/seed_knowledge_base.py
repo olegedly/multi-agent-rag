@@ -20,23 +20,16 @@ import hashlib
 import sys
 from pathlib import Path
 
-import yaml
 from sqlalchemy import select, delete as sa_delete
 
 # Ensure ``backend/`` is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.config import get_settings
+from backend.corpus_config import CorporaConfig
 from backend.db import create_db_sessionmaker, init_db
 from backend.embeddings.factory import create_embedding_client
 from backend.models import Base, Document, DocumentSource
-from backend.rag.chunker import get_chunker
-
-# ── Paths ────────────────────────────────────────────────────────────────────
-
-CORPORA_YAML = Path(__file__).resolve().parent.parent / "backend" / "corpora.yaml"
-CORPORA_DIR = Path(__file__).resolve().parent.parent / "corpora"
-
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -45,31 +38,9 @@ def _sha256(content: str) -> str:
     return hashlib.sha256(content.encode()).hexdigest()
 
 
-def _load_corpora() -> list[dict]:
-    with open(CORPORA_YAML) as f:
-        data = yaml.safe_load(f)
-    return (data or {}).get("corpora", [])
-
-
-def _discover_files(glob_pattern: str) -> list[Path]:
-    """Resolve a glob pattern relative to the project root and return matching files."""
-    root = CORPORA_DIR.parent
-    return sorted(root.glob(glob_pattern))
-
-
-def _get_chunker(config: dict):
-    """Instantiate the chunker strategy configured for this corpus."""
-    strategy = config.get("chunker", "paragraph")
-    try:
-        return get_chunker(strategy)
-    except ValueError as exc:
-        print(f"  Warning: {exc}, falling back to paragraph")
-        return get_chunker("paragraph")
-
-
-def _read_files(glob_pattern: str) -> list[tuple[str, str]]:
-    """Read all files matching *glob_pattern* and return ``(filename, content)`` pairs."""
-    files = _discover_files(glob_pattern)
+def _read_files(corpus_config: CorporaConfig, corpus) -> list[tuple[str, str]]:
+    """Read all files matching the corpus's doc glob and return ``(filename, content)`` pairs."""
+    files = corpus_config.resolve_document_glob(corpus)
     result: list[tuple[str, str]] = []
     for fpath in files:
         content = fpath.read_text(encoding="utf-8")
@@ -77,14 +48,14 @@ def _read_files(glob_pattern: str) -> list[tuple[str, str]]:
     return result
 
 
-def _get_key(filename: str) -> str:
+def _get_key(filename: str, root: Path) -> str:
     """Return the relative path for use as a stable file key.
 
     Produces paths like ``corpora/mcp-spec/Tools.md`` regardless of
     absolute path differences.
     """
     try:
-        return str(Path(filename).relative_to(CORPORA_DIR.parent))
+        return str(Path(filename).relative_to(root))
     except ValueError:
         return filename
 
@@ -95,16 +66,18 @@ def _get_key(filename: str) -> str:
 def compute_diff(
     files: list[tuple[str, str]],
     source_store: dict[str, str],
+    root: Path,
 ) -> dict[str, list]:
     """Compare source files against stored hashes and return a diff plan.
 
+    *root* is the project root used by :func:`_get_key` to produce relative paths.
     *source_store* maps ``filename → content_hash`` for the active corpus.
     """
     plan: dict[str, list] = {"insert": [], "update": [], "delete": [], "skip": []}
 
     # Check each disk file against stored hash
     for fname, content in files:
-        key = _get_key(fname)
+        key = _get_key(fname, root)
         disk_hash = _sha256(content)
         stored_hash = source_store.get(key)
         if stored_hash is None:
@@ -115,7 +88,7 @@ def compute_diff(
             plan["skip"].append((key, disk_hash))
 
     # Find files in store that no longer exist on disk
-    disk_keys = {_get_key(fname) for fname, _content in files}
+    disk_keys = {_get_key(fname, root) for fname, _content in files}
     for fname in source_store:
         if fname not in disk_keys:
             plan["delete"].append((fname,))
@@ -137,21 +110,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 async def seed_corpus(
-    config: dict,
+    corpus_config: CorporaConfig,
+    corpus,
     embedding_client,
     sessionmaker,
 ) -> int:
     """Seed a single corpus. Returns number of chunks inserted."""
-    corpus_id = config["id"]
-    slug = config["slug"]
-    glob_pattern = config["documents"]
+    corpus_id = corpus.id
+    slug = corpus.slug
 
-    print(f"\n📚 Seeding corpus: {config['name']} ({slug})")
+    print(f"\n📚 Seeding corpus: {corpus.name} ({slug})")
 
     # ── Discover files ────────────────────────────────────────────────
-    files = _read_files(glob_pattern)
+    files = _read_files(corpus_config, corpus)
     if not files:
-        print(f"  → No files matched {glob_pattern}, nothing to seed")
+        print(f"  → No files matched {corpus.documents}, nothing to seed")
         return 0
     print(f"  → Found {len(files)} source file(s)")
 
@@ -165,11 +138,13 @@ async def seed_corpus(
             source_store[row.filename] = row.content_hash
 
     # ── Compute diff ──────────────────────────────────────────────────
-    plan = compute_diff(files, source_store)
+    root = corpus_config.project_root  # relative path anchor
+    plan = compute_diff(files, source_store, root)
     print(f"  → {len(plan['insert'])} insert(s), {len(plan['update'])} update(s), "
           f"{len(plan['delete'])} delete(s), {len(plan['skip'])} skip(s)")
 
-    chunker = _get_chunker(config)
+    chunker = corpus_config.get_chunker(slug)
+    assert chunker is not None
     total_chunks = 0
 
     # ── Process (insert + update) ─────────────────────────────────────
@@ -239,20 +214,20 @@ async def seed_corpus(
 
 async def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    corpora = _load_corpora()
+    corpus_config = CorporaConfig()
 
-    if not corpora:
+    if not corpus_config.list():
         print("No corpora configured in corpora.yaml")
         return 0
 
     if args.all:
-        to_seed = corpora
+        to_seed = corpus_config.list()
     else:
-        matched = [c for c in corpora if c.get("slug") == args.corpus]
-        if not matched:
+        matched = corpus_config.get(args.corpus)
+        if matched is None:
             print(f"Corpus '{args.corpus}' not found in corpora.yaml")
             return 1
-        to_seed = matched
+        to_seed = [matched]
 
     # ── Initialize database ──────────────────────────────────────────
     settings = get_settings()
@@ -290,8 +265,8 @@ async def main(argv: list[str] | None = None) -> int:
     embedding_client = create_embedding_client()
 
     total = 0
-    for config in to_seed:
-        total += await seed_corpus(config, embedding_client, sessionmaker)
+    for corpus in to_seed:
+        total += await seed_corpus(corpus_config, corpus, embedding_client, sessionmaker)
 
     print(f"\n📊 Total: {total} chunks across {len(to_seed)} corpus/corpora")
     return 0

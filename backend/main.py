@@ -7,15 +7,13 @@ parameters — when omitted they are created from environment variables.
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
-
-import yaml
 
 from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
 from fastapi import FastAPI
 from google.adk.agents import Agent
 
 from backend.config import Settings, get_settings
+from backend.corpus_config import CorporaConfig
 from backend.llm.adk_adapter import AdkLlmAdapter
 from backend.llm.factory import create_llm_client
 from backend.llm.protocol import LLMClient
@@ -23,25 +21,10 @@ from backend.llm.transport import HttpTransport
 from backend.middleware import BudgetFile, BudgetMiddleware, QueryValidationMiddleware
 
 
-_CORPORA_YAML_PATH = Path(__file__).resolve().parent / "corpora.yaml"
-
-
-def _load_corpora(path: Path = _CORPORA_YAML_PATH) -> list[dict]:
-    """Load the corpus registry from ``corpora.yaml``.
-
-    Returns an empty list if the file does not exist.
-    """
-    if not path.exists():
-        return []
-    with open(path) as f:
-        data = yaml.safe_load(f)
-    return (data or {}).get("corpora", [])
-
-
 def create_app(
     llm_client: LLMClient | None = None,
     settings: Settings | None = None,
-    corpora: list[dict] | None = None,
+    corpora_config: CorporaConfig | None = None,
 ) -> FastAPI:
     """Build and return a configured FastAPI application.
 
@@ -53,9 +36,9 @@ def create_app(
         :func:`create_llm_client`.
     settings : optional
         Override settings (e.g. for tests). When ``None``, reads from ``.env``.
-    corpora : optional
-        Corpus list for testing. When ``None`` (default), loads from
-        ``backend/corpora.yaml``.
+    corpora_config : optional
+        Injected config for testing. When ``None`` (default), loads from
+        ``backend/corpora.yaml`` via :class:`CorporaConfig`.
 
     Returns
     -------
@@ -65,8 +48,8 @@ def create_app(
     if settings is None:
         settings = get_settings()
 
-    if corpora is None:
-        corpora = _load_corpora()
+    if corpora_config is None:
+        corpora_config = CorporaConfig()
 
     # Collect transport references for lifespan cleanup
     transports: list[HttpTransport] = []
@@ -150,7 +133,7 @@ def create_app(
     @app.get("/api/corpora")
     async def list_corpora():
         """Return the list of available knowledge bases."""
-        return corpora
+        return corpora_config.list()
 
     # ------------------------------------------------------------------
     # Health check
