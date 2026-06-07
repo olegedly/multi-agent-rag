@@ -30,12 +30,7 @@ from backend.config import get_settings
 from backend.db import create_db_sessionmaker, init_db
 from backend.embeddings.factory import create_embedding_client
 from backend.models import Base, Document, DocumentSource
-from backend.rag.chunker import (
-    FixedSizeChunker,
-    MarkdownHeadingChunker,
-    ParagraphChunker,
-    RecursiveChunker,
-)
+from backend.rag.chunker import get_chunker
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 
@@ -65,17 +60,11 @@ def _discover_files(glob_pattern: str) -> list[Path]:
 def _get_chunker(config: dict):
     """Instantiate the chunker strategy configured for this corpus."""
     strategy = config.get("chunker", "paragraph")
-    if strategy == "markdown-heading":
-        return MarkdownHeadingChunker(max_tokens=500, overlap=50)
-    elif strategy == "paragraph":
-        return ParagraphChunker(max_tokens=500, overlap=50)
-    elif strategy == "recursive":
-        return RecursiveChunker(max_chars=2000)
-    elif strategy == "fixed-size":
-        return FixedSizeChunker(max_tokens=500, overlap=50)
-    else:
-        print(f"  Warning: unknown chunker strategy '{strategy}', falling back to paragraph")
-        return ParagraphChunker(max_tokens=500, overlap=50)
+    try:
+        return get_chunker(strategy)
+    except ValueError as exc:
+        print(f"  Warning: {exc}, falling back to paragraph")
+        return get_chunker("paragraph")
 
 
 def _read_files(glob_pattern: str) -> list[tuple[str, str]]:
