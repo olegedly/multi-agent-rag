@@ -1,7 +1,9 @@
 """SQLAlchemy ORM models for the multi-agent RAG system.
 
 ``Document`` stores chunked corpus content with vector embeddings,
-scoped by ``corpus_id`` for multi-corpus isolation.
+scoped by ``corpus_id`` for multi-corpus isolation.  Each chunk
+references a ``DocumentSource`` row via a composite foreign key
+``(corpus_id, source_filename)`` with ``ON DELETE CASCADE``.
 
 ``DocumentSource`` tracks source file hashes (SHA-256) for idempotent
 seeding — the seeding script uses this table to compute a diff
@@ -11,7 +13,14 @@ seeding — the seeding script uses this table to compute a diff
 import datetime
 
 from pgvector.sqlalchemy import VECTOR
-from sqlalchemy import DateTime, Integer, String, Text, func
+from sqlalchemy import (
+    DateTime,
+    ForeignKeyConstraint,
+    Integer,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -25,9 +34,19 @@ class Document(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     corpus_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    source_filename: Mapped[str] = mapped_column(String, nullable=False, default="")
     content: Mapped[str] = mapped_column(Text, nullable=False)
     embedding = mapped_column(VECTOR(768))
     doc_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["corpus_id", "source_filename"],
+            ["document_sources.corpus_id", "document_sources.filename"],
+            ondelete="CASCADE",
+            name="fk_document_source",
+        ),
+    )
 
 
 class DocumentSource(Base):

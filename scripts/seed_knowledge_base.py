@@ -21,16 +21,21 @@ import sys
 from pathlib import Path
 
 import yaml
+from sqlalchemy import select, delete as sa_delete
 
 # Ensure ``backend/`` is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from backend.config import get_settings
+from backend.db import create_db_sessionmaker, init_db
+from backend.embeddings.factory import create_embedding_client
+from backend.models import Base, Document, DocumentSource
 from backend.rag.chunker import (
+    FixedSizeChunker,
     MarkdownHeadingChunker,
     ParagraphChunker,
     RecursiveChunker,
 )
-from backend.embeddings.factory import create_embedding_client
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 
@@ -53,8 +58,7 @@ def _load_corpora() -> list[dict]:
 
 def _discover_files(glob_pattern: str) -> list[Path]:
     """Resolve a glob pattern relative to the project root and return matching files."""
-    root = CORPORA_DIR.parent  # project root
-    # glob_pattern is relative to root (e.g. "corpora/mcp-spec/*.md")
+    root = CORPORA_DIR.parent
     return sorted(root.glob(glob_pattern))
 
 
@@ -67,6 +71,8 @@ def _get_chunker(config: dict):
         return ParagraphChunker(max_tokens=500, overlap=50)
     elif strategy == "recursive":
         return RecursiveChunker(max_chars=2000)
+    elif strategy == "fixed-size":
+        return FixedSizeChunker(max_tokens=500, overlap=50)
     else:
         print(f"  Warning: unknown chunker strategy '{strategy}', falling back to paragraph")
         return ParagraphChunker(max_tokens=500, overlap=50)
@@ -82,38 +88,47 @@ def _read_files(glob_pattern: str) -> list[tuple[str, str]]:
     return result
 
 
-# ── Diff logic (extracted for testability) ────────────────────────────────────
+def _get_key(filename: str) -> str:
+    """Return the relative path for use as a stable file key.
+
+    Produces paths like ``corpora/mcp-spec/Tools.md`` regardless of
+    absolute path differences.
+    """
+    try:
+        return str(Path(filename).relative_to(CORPORA_DIR.parent))
+    except ValueError:
+        return filename
+
+
+# ── Diff logic ────────────────────────────────────────────────────────────────
 
 
 def compute_diff(
-    corpus_id: str,
     files: list[tuple[str, str]],
-    source_store: dict[str, dict[str, str]],
+    source_store: dict[str, str],
 ) -> dict[str, list]:
     """Compare source files against stored hashes and return a diff plan.
 
-    *source_store* is a dict mapping ``corpus_id`` → ``{filename: content_hash}``.
+    *source_store* maps ``filename → content_hash`` for the active corpus.
     """
     plan: dict[str, list] = {"insert": [], "update": [], "delete": [], "skip": []}
 
-    # Fetch stored hashes for this corpus
-    stored: dict[str, str] = source_store.get(corpus_id, {})
-
     # Check each disk file against stored hash
     for fname, content in files:
+        key = _get_key(fname)
         disk_hash = _sha256(content)
-        stored_hash = stored.get(fname)
+        stored_hash = source_store.get(key)
         if stored_hash is None:
-            plan["insert"].append((fname, content))
+            plan["insert"].append((key, fname, content))
         elif stored_hash != disk_hash:
-            plan["update"].append((fname, content))
+            plan["update"].append((key, fname, content))
         else:
-            plan["skip"].append((fname, disk_hash))
+            plan["skip"].append((key, disk_hash))
 
     # Find files in store that no longer exist on disk
-    disk_files = {fname for fname, _content in files}
-    for fname in stored:
-        if fname not in disk_files:
+    disk_keys = {_get_key(fname) for fname, _content in files}
+    for fname in source_store:
+        if fname not in disk_keys:
             plan["delete"].append((fname,))
 
     return plan
@@ -132,63 +147,104 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-async def seed_corpus(config: dict, embedding_client) -> int:
-    """Seed a single corpus. Returns the number of chunks inserted.
-
-    Parameters
-    ----------
-    config : dict
-        Corpus configuration from corpora.yaml.
-    embedding_client : EmbeddingClient
-        Client for generating vector embeddings.
-
-    Returns
-    -------
-    int
-        Number of chunks processed.
-    """
+async def seed_corpus(
+    config: dict,
+    embedding_client,
+    sessionmaker,
+) -> int:
+    """Seed a single corpus. Returns number of chunks inserted."""
     corpus_id = config["id"]
     slug = config["slug"]
     glob_pattern = config["documents"]
 
     print(f"\n📚 Seeding corpus: {config['name']} ({slug})")
 
-    # Discover and read files
+    # ── Discover files ────────────────────────────────────────────────
     files = _read_files(glob_pattern)
     if not files:
         print(f"  → No files matched {glob_pattern}, nothing to seed")
         return 0
-
     print(f"  → Found {len(files)} source file(s)")
 
-    # In a real run, we'd load existing hashes from the DB.
-    # For now, we assume everything is new (first run).
-    source_store: dict[str, dict[str, str]] = {}
-    plan = compute_diff(corpus_id, files, source_store)
+    # ── Load existing hashes from DB ──────────────────────────────────
+    async with sessionmaker() as session:
+        result = await session.execute(
+            select(DocumentSource).where(DocumentSource.corpus_id == corpus_id)
+        )
+        source_store: dict[str, str] = {}
+        for row in result.scalars():
+            source_store[row.filename] = row.content_hash
 
+    # ── Compute diff ──────────────────────────────────────────────────
+    plan = compute_diff(files, source_store)
     print(f"  → {len(plan['insert'])} insert(s), {len(plan['update'])} update(s), "
           f"{len(plan['delete'])} delete(s), {len(plan['skip'])} skip(s)")
 
     chunker = _get_chunker(config)
     total_chunks = 0
-    total_embeddings = 0
 
-    # Process inserts and updates: chunk → embed → store
+    # ── Process (insert + update) ─────────────────────────────────────
     to_process = plan["insert"] + plan["update"]
-    for fname, content in to_process:
-        chunks = chunker.chunk(content, {"title": fname, "source_url": ""})
-        total_chunks += len(chunks)
-
+    for key, fname, content in to_process:
+        chunks = chunker.chunk(content, {"title": key, "source_url": ""})
         texts = [c.content for c in chunks]
         embeddings = await embedding_client.embed_texts(texts)
-        total_embeddings += len(embeddings)
 
-        print(f"    ● {fname}: {len(chunks)} chunks, {len(embeddings)} embeddings")
+        async with sessionmaker() as session:
+            # Delete old chunks for this file
+            await session.execute(
+                sa_delete(Document).where(
+                    Document.corpus_id == corpus_id,
+                    Document.source_filename == key,
+                )
+            )
 
-    # In a real run, we'd INSERT/UPDATE into the DB here and update document_sources.
-    # For now, we just report what we'd do.
+            # Insert new chunks
+            for chunk, embedding in zip(chunks, embeddings, strict=True):
+                doc = Document(
+                    corpus_id=corpus_id,
+                    source_filename=key,
+                    content=chunk.content,
+                    embedding=embedding,
+                    doc_metadata=chunk.metadata,
+                )
+                session.add(doc)
 
-    print(f"  ✅ {total_chunks} chunks processed with {total_embeddings} embeddings")
+            # Upsert document_source
+            existing = await session.get(DocumentSource, (corpus_id, key))
+            if existing:
+                existing.content_hash = _sha256(content)
+            else:
+                session.add(DocumentSource(
+                    corpus_id=corpus_id,
+                    filename=key,
+                    content_hash=_sha256(content),
+                ))
+
+            await session.commit()
+
+        total_chunks += len(chunks)
+        print(f"    ● {key}: {len(chunks)} chunks, {len(embeddings)} embeddings")
+
+    # ── Process (delete) ─────────────────────────────────────────────
+    for (del_key,) in plan["delete"]:
+        async with sessionmaker() as session:
+            await session.execute(
+                sa_delete(Document).where(
+                    Document.corpus_id == corpus_id,
+                    Document.source_filename == del_key,
+                )
+            )
+            await session.execute(
+                sa_delete(DocumentSource).where(
+                    DocumentSource.corpus_id == corpus_id,
+                    DocumentSource.filename == del_key,
+                )
+            )
+            await session.commit()
+        print(f"    ✗ {del_key}: removed")
+
+    print(f"  ✅ {total_chunks} chunks written to DB for {slug}")
     return total_chunks
 
 
@@ -209,11 +265,44 @@ async def main(argv: list[str] | None = None) -> int:
             return 1
         to_seed = matched
 
+    # ── Initialize database ──────────────────────────────────────────
+    settings = get_settings()
+    await init_db(settings.database_url)
+    engine = None
+    try:
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
+        engine = create_async_engine(settings.database_url)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            # Create IVFFlat index for cosine-similarity search
+            await conn.execute(text(
+                "CREATE INDEX IF NOT EXISTS ix_documents_embedding "
+                "ON documents USING ivfflat (embedding vector_cosine_ops) "
+                "WITH (lists = 10)"
+            ))
+
+            # Migrate: add FK if the table existed before the FK was defined
+            await conn.execute(text(
+                "DO $$ BEGIN "
+                "ALTER TABLE documents "
+                "ADD CONSTRAINT fk_document_source "
+                "FOREIGN KEY (corpus_id, source_filename) "
+                "REFERENCES document_sources(corpus_id, filename) "
+                "ON DELETE CASCADE; "
+                "EXCEPTION WHEN duplicate_object THEN NULL; "
+                "END $$"
+            ))
+    finally:
+        if engine:
+            await engine.dispose()
+
+    sessionmaker = create_db_sessionmaker(settings.database_url)
     embedding_client = create_embedding_client()
 
     total = 0
     for config in to_seed:
-        total += await seed_corpus(config, embedding_client)
+        total += await seed_corpus(config, embedding_client, sessionmaker)
 
     print(f"\n📊 Total: {total} chunks across {len(to_seed)} corpus/corpora")
     return 0

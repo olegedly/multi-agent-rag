@@ -140,6 +140,35 @@ class ParagraphChunker:
         return result
 
 
+class FixedSizeChunker:
+    """Mechanical token-count splitting with overlap.
+
+    Splits text into fixed-size chunks by character count
+    (approximated as ``max_tokens * 4``), with configurable
+    overlap. No awareness of structure — pure byte slicing.
+    """
+
+    def __init__(self, max_tokens: int = 500, overlap: int = 50):
+        self.max_chars = max_tokens * 4
+        self.overlap_chars = overlap * 4
+
+    def chunk(self, text: str, metadata: dict | None = None) -> list[Chunk]:
+        if len(text) <= self.max_chars:
+            result = [Chunk(content=text)]
+            _tag_chunks(result, metadata)
+            return result
+
+        chunks: list[Chunk] = []
+        start = 0
+        while start < len(text):
+            end = min(start + self.max_chars, len(text))
+            chunks.append(Chunk(content=text[start:end]))
+            start = end - self.overlap_chars if end < len(text) else len(text)
+
+        _tag_chunks(chunks, metadata)
+        return chunks
+
+
 class RecursiveChunker:
     """Character-based fallback splitting by separator priority.
 

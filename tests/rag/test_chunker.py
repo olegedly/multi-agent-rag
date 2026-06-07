@@ -6,6 +6,7 @@ All chunkers are pure functions — no filesystem or DB dependency.
 import pytest
 
 from backend.rag.chunker import (
+    FixedSizeChunker,
     MarkdownHeadingChunker,
     ParagraphChunker,
     RecursiveChunker,
@@ -94,6 +95,34 @@ class TestParagraphChunker:
         )
         for c in chunks:
             assert "chunk_index" in c.metadata
+
+
+class TestFixedSizeChunker:
+    """Mechanical token-count splitting with overlap."""
+
+    def test_splits_exact_size(self) -> None:
+        text = "A" * 4000  # ~1000 tokens, well above 500-token limit
+        chunks = FixedSizeChunker(max_tokens=250, overlap=25).chunk(
+            text, {"title": "Test"}
+        )
+        assert len(chunks) > 1
+
+    def test_single_chunk_for_short_text(self) -> None:
+        text = "Short text"
+        chunks = FixedSizeChunker(max_tokens=500, overlap=50).chunk(
+            text, {"title": "Test"}
+        )
+        assert len(chunks) == 1
+        assert chunks[0].content == "Short text"
+
+    def test_each_chunk_has_metadata(self) -> None:
+        text = "A" * 4000
+        chunks = FixedSizeChunker(max_tokens=250, overlap=25).chunk(
+            text, {"title": "Test"}
+        )
+        for c in chunks:
+            assert "chunk_index" in c.metadata
+            assert c.metadata["title"] == "Test"
 
 
 class TestRecursiveChunker:
