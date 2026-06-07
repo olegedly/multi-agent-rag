@@ -288,7 +288,7 @@ class TestQueryValidation:
         response = client.post("/api/chat", json=payload)
         assert response.status_code == 422
         data = response.json()
-        assert "messages" in data["detail"].lower()
+        assert "user message limit" in data["detail"].lower()
 
     def test_at_limit_messages_accepted(self, client: TestClient) -> None:
         """Exactly max_user_messages is accepted."""

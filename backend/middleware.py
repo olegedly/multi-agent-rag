@@ -102,8 +102,8 @@ class QueryValidationMiddleware(BaseHTTPMiddleware):
                     status_code=422,
                     content={
                         "detail": (
-                            f"Too many user messages ({len(user_msgs)}). "
-                            f"Maximum allowed is {self.max_user_messages}."
+                            f"Conversation exceeds the user message limit ({len(user_msgs)} sent vs "
+                            f"{self.max_user_messages} allowed)."
                         )
                     },
                 )
