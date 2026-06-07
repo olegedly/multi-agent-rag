@@ -1,19 +1,15 @@
 /**
- * A fetch wrapper that pre-reads non-ok response bodies so the library's
- * responseToSSEChunks can always extract body.detail via
- * response.clone().json() — even in runtimes where Response.clone()
- * silently fails (jsdom, Bun, Node).
+ * A fetch wrapper that extracts error detail from non-ok responses
+ * and throws with an enriched message, bypassing the library's
+ * responseToSSEChunks which relies on Response.clone().json() —
+ * a path that silently fails on Bun.
  *
- * The library code (connection-adapters.js:63-76) does:
+ * The library's normalizeConnectionAdapter.send() catches errors
+ * thrown from connect() and sets them as RUN_ERROR with the full
+ * message, which reaches chat.error()?.message.
  *
- *   const body = await response.clone().json();
- *   if (body.detail) detail = `: ${body.detail}`;
- *
- * but wraps it in try/catch {}, silently swallowing failures.
- *
- * Instead of patching the original Response (which doesn't work on Bun),
- * this returns a plain wrapper object that satisfies the shape the
- * library needs: response.ok, status, statusText, and clone().
+ * On ok responses, the raw Response is returned for the library
+ * to stream SSE chunks from.
  */
 export function resilientFetch(
   ...args: Parameters<typeof fetch>
@@ -21,31 +17,17 @@ export function resilientFetch(
   return fetch(...args).then(async (response) => {
     if (response.ok) return response;
 
+    let detail = "";
     try {
       const bodyText = await response.text();
-      const parsed = JSON.parse(bodyText) as Record<string, unknown>;
-
-      // Return a plain object with just the shape the library reads.
-      // The library never passes a non-ok response to getResponseStreamReader,
-      // so we don't need to implement the full Response interface.
-      return {
-        ok: false,
-        status: response.status,
-        statusText: response.statusText,
-        headers: response.headers,
-        clone() {
-          return {
-            ok: false,
-            status: response.status,
-            statusText: response.statusText,
-            json: () => Promise.resolve(parsed),
-          };
-        },
-      } as unknown as Response;
+      const body = JSON.parse(bodyText) as Record<string, unknown>;
+      if (body.detail) detail = `: ${body.detail}`;
     } catch {
-      // Body read/parse failed — return original and let library's
-      // own try/catch in responseToSSEChunks handle the fallback
-      return response;
+      // Couldn't read/parse body — fall through with empty detail
     }
+
+    throw new Error(
+      `HTTP error! status: ${response.status} ${response.statusText}${detail}`,
+    );
   });
 }

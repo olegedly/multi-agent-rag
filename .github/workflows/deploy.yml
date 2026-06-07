@@ -5,6 +5,7 @@ on:
     branches: [dev, main]
 
 env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   REGISTRY: ghcr.io
 
 jobs:
@@ -13,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v8.1.0
         with:
           python-version: "3.13"
           activate-environment: true

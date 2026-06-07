@@ -4,13 +4,14 @@ import { useChat, fetchServerSentEvents } from "@tanstack/ai-solid";
 import { resilientFetch } from "../resilientFetch";
 
 /**
- * CI/PROD BUG: jsdom's Response.clone() implementation can fail, and the
- * library's responseToSSEChunks uses an empty catch {} that silently
- * swallows the failure — losing the server's error detail.
+ * resilientFetch throws on non-ok responses, bypassing the library's
+ * responseToSSEChunks which depends on Response.clone().json() and
+ * silently swallows failures.
  *
- * Fix: a custom fetchClient in fetchServerSentEvents options that pre-reads
- * the response body on non-ok and patches response.clone to return a
- * plain object with working json().
+ * The library's normalizeConnectionAdapter.send() catches the thrown
+ * error, pushes a RUN_ERROR event, and re-throws. ChatClient catches
+ * the re-throw in streamResponse() and calls reportStreamError(),
+ * which sets chat.error.
  */
 
 describe("useChat error propagation", () => {
@@ -18,12 +19,12 @@ describe("useChat error propagation", () => {
     delete (globalThis as Record<string, unknown>).fetch;
   });
 
-  // ── RED: proves the bug without resilientFetch ─────────────────────
+  // ── Red: proves bug without resilientFetch ─────────────────────────
 
-  it("RED: detail is DROPPED when Response.clone().json() fails", async () => {
+  it("detail is DROPPED when Response.clone().json() fails (no resilientFetch)", async () => {
     const detail = "Daily demo budget reached. Try again tomorrow.";
 
-    // Simulate jsdom where clone() returns something whose json() rejects
+    // Simulate jsdom/Bun where clone() returns something whose json() rejects
     globalThis.fetch = (() => {
       const bodyText = JSON.stringify({ detail });
       let bodyConsumed = false;
@@ -40,9 +41,10 @@ describe("useChat error propagation", () => {
             json: () => Promise.reject(new Error("Body already consumed")),
           } as unknown as Response;
         },
-        text: () => (bodyConsumed
-          ? Promise.reject(new Error("Body already consumed"))
-          : Promise.resolve(bodyText)),
+        text: () =>
+          bodyConsumed
+            ? Promise.reject(new Error("Body already consumed"))
+            : Promise.resolve(bodyText),
       }) as unknown as Response;
     }) as unknown as typeof fetch;
 
@@ -59,16 +61,15 @@ describe("useChat error propagation", () => {
       });
     });
 
-    // BUG: clone().json() fails → details lost → only "HTTP error! status: 429"
     expect(result.errorMsg).not.toContain("Daily demo budget");
   });
 
-  // ── GREEN: fix with resilientFetch ─────────────────────────────────
+  // ── Green: fix with resilientFetch ─────────────────────────────────
 
-  it("GREEN: resilientFetch preserves detail when clone fails", async () => {
+  it("resilientFetch preserves 429 detail when clone fails", async () => {
     const detail = "Daily demo budget reached. Try again tomorrow.";
 
-    // Same broken clone simulation as above
+    // Same broken clone as above
     globalThis.fetch = (() => {
       const bodyText = JSON.stringify({ detail });
       let bodyConsumed = false;
@@ -85,9 +86,10 @@ describe("useChat error propagation", () => {
             json: () => Promise.reject(new Error("Body already consumed")),
           } as unknown as Response;
         },
-        text: () => (bodyConsumed
-          ? Promise.reject(new Error("Body already consumed"))
-          : Promise.resolve(bodyText)),
+        text: () =>
+          bodyConsumed
+            ? Promise.reject(new Error("Body already consumed"))
+            : Promise.resolve(bodyText),
       }) as unknown as Response;
     }) as unknown as typeof fetch;
 
@@ -109,7 +111,7 @@ describe("useChat error propagation", () => {
     expect(result.errorMsg).toContain("Daily demo budget");
   });
 
-  // ── Happy path: standard Response (clone works normally) ───────────
+  // ── Standard Response: 422 with detail ─────────────────────────────
 
   it("422 detail reaches error signal with standard Response", async () => {
     const detail = "Too many user messages (3). Maximum allowed is 2.";
@@ -140,7 +142,7 @@ describe("useChat error propagation", () => {
     expect(result.errorMsg).toContain("Too many user messages");
   });
 
-  // ── Fallback: non-JSON error body ──────────────────────────────────
+  // ── Non-JSON error body ────────────────────────────────────────────
 
   it("error without detail still has status info", async () => {
     globalThis.fetch = (() =>
