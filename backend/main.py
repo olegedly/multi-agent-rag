@@ -18,7 +18,7 @@ from backend.llm.adk_adapter import AdkLlmAdapter
 from backend.llm.factory import create_llm_client
 from backend.llm.protocol import LLMClient
 from backend.llm.transport import HttpTransport
-from backend.middleware import BudgetFile, BudgetMiddleware, QueryValidationMiddleware
+from backend.middleware import BudgetFile, ChatGuard
 
 
 def create_app(
@@ -90,21 +90,16 @@ def create_app(
         llm_client.usage_callback = _record_usage
 
     # ------------------------------------------------------------------
-    # Middleware (order matters: outermost first)
-    #   BudgetMiddleware is outermost (added last) so a budget-exhausted
-    #   429 short-circuits before parsing the request body.
+    # ChatGuard — single middleware for budget check + query validation.
+    # Reads the body once, checks budget first (no body parsing needed
+    # when exhausted), then validates user messages.
     # ------------------------------------------------------------------
     app.add_middleware(
-        QueryValidationMiddleware,
+        ChatGuard,
         max_query_length=settings.demo_max_query_length,
         max_user_messages=settings.demo_max_user_messages,
+        budget_file=budget_file,  # ``None`` when budget disabled
     )
-    if not settings.demo_disable_budget:
-        assert budget_file is not None
-        app.add_middleware(
-            BudgetMiddleware,
-            budget_file=budget_file,
-        )
 
     llm_model = AdkLlmAdapter(llm_client)
 
