@@ -1,13 +1,11 @@
 """Tests for Pydantic Settings / config module."""
 
-import os
-
 from backend.config import Settings
 
 
 class TestSettingsDefaults:
     def test_default_app_name(self) -> None:
-        s = Settings(_env_file=None)
+        s = Settings(_env_file=None)  # type: ignore[call-arg]
         assert s.app_name == "multi-agent-rag"
 
     def test_llm_defaults_empty(self, monkeypatch) -> None:
@@ -15,7 +13,7 @@ class TestSettingsDefaults:
         monkeypatch.delenv("LLM_MODEL", raising=False)
         monkeypatch.delenv("LLM_API_KEY", raising=False)
         monkeypatch.delenv("LLM_BASE_URL", raising=False)
-        s = Settings(_env_file=None)
+        s = Settings(_env_file=None)  # type: ignore[call-arg]
         assert s.llm_provider_type == ""
         assert s.llm_model == ""
         assert s.llm_api_key == ""
@@ -24,7 +22,7 @@ class TestSettingsDefaults:
     def test_postgres_defaults(self, monkeypatch) -> None:
         monkeypatch.delenv("POSTGRES_HOST", raising=False)
         monkeypatch.delenv("POSTGRES_PORT", raising=False)
-        s = Settings(_env_file=None)
+        s = Settings(_env_file=None)  # type: ignore[call-arg]
         assert s.postgres_host == "localhost"
         assert s.postgres_port == 5432
 
@@ -47,9 +45,27 @@ class TestSettingsEnvOverride:
         assert s.llm_model == "claude-3"
 
 
+class TestDemoBudgetDefaults:
+    def test_daily_budget_default(self) -> None:
+        s = Settings(_env_file=None)  # type: ignore[call-arg]
+        assert s.demo_daily_budget_tokens == 1_000_000
+
+    def test_budget_file_default(self) -> None:
+        s = Settings(_env_file=None)  # type: ignore[call-arg]
+        assert s.demo_budget_file == "/data/demo-budget.json"
+
+    def test_max_query_length_default(self) -> None:
+        s = Settings(_env_file=None)  # type: ignore[call-arg]
+        assert s.demo_max_query_length == 500
+
+    def test_max_user_messages_default(self) -> None:
+        s = Settings(_env_file=None)  # type: ignore[call-arg]
+        assert s.demo_max_user_messages == 50
+
+
 class TestSettingsEnvFile:
     def test_ignores_extra_keys(self) -> None:
         """SettingsConfigDict(extra='ignore') discards unknown env vars."""
-        s = Settings(_extra={"UNRELATED": "should-be-ignored"})
+        s = Settings(_extra={"UNRELATED": "should-be-ignored"})  # type: ignore[call-arg]
         # Should not raise, and unrelated keys are silently dropped
         assert s.app_name == "multi-agent-rag"

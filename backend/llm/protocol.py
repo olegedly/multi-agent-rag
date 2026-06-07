@@ -1,6 +1,7 @@
 """Abstract LLM client interface — the dependency inversion boundary."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import AsyncIterable
 
@@ -53,9 +54,15 @@ class LLMClient(ABC):
     Every provider implementation (Anthropic, OpenAI, etc.) implements this
     interface. The ADK adapter layer translates between ADK's types and
     these pure-python types.
+
+    ``usage_callback`` is an optional hook called after each successful
+    generate with the final ``Usage``. It is the seam for the daily
+    demo token budget — the adapter layer fires it, the app wires a
+    closure that increments the budget file.
     """
 
     model: str
+    usage_callback: Callable[[Usage], Awaitable[None]] | None = None
 
     @abstractmethod
     async def generate(

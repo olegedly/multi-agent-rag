@@ -7,6 +7,7 @@ patching or ``importlib.reload`` needed.
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.config import Settings
 from backend.main import create_app
 from tests.fakes import FakeLLMClient
 
@@ -15,8 +16,13 @@ from tests.fakes import FakeLLMClient
 
 
 @pytest.fixture
-def client():
-    app = create_app(llm_client=FakeLLMClient())
+def client(tmp_path):
+    app = create_app(
+        llm_client=FakeLLMClient(),
+        settings=Settings(
+            demo_budget_file=str(tmp_path / "budget.json"),
+        ),
+    )
     with TestClient(app) as c:
         yield c
 

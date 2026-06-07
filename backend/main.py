@@ -17,6 +17,7 @@ from backend.llm.adk_adapter import AdkLlmAdapter
 from backend.llm.factory import create_llm_client
 from backend.llm.protocol import LLMClient
 from backend.llm.transport import HttpTransport
+from backend.middleware import BudgetFile, BudgetMiddleware, QueryValidationMiddleware
 
 
 def create_app(
@@ -62,6 +63,40 @@ def create_app(
             await t.close()
 
     app = FastAPI(title=settings.app_name, lifespan=_lifespan)
+
+    # ------------------------------------------------------------------
+    # Daily token budget — shared between middleware (read) and
+    # usage_callback (write).
+    # ------------------------------------------------------------------
+    budget_file: BudgetFile | None = None
+    if not settings.demo_disable_budget:
+        budget_file = BudgetFile(
+            path=settings.demo_budget_file,
+            daily_limit=settings.demo_daily_budget_tokens,
+        )
+
+        # Wire usage_callback so every LLM response increments the budget
+        async def _record_usage(usage):
+            budget_file.add_tokens(usage.input_tokens + usage.output_tokens)
+
+        llm_client.usage_callback = _record_usage
+
+    # ------------------------------------------------------------------
+    # Middleware (order matters: outermost first)
+    #   BudgetMiddleware is outermost (added last) so a budget-exhausted
+    #   429 short-circuits before parsing the request body.
+    # ------------------------------------------------------------------
+    app.add_middleware(
+        QueryValidationMiddleware,
+        max_query_length=settings.demo_max_query_length,
+        max_user_messages=settings.demo_max_user_messages,
+    )
+    if not settings.demo_disable_budget:
+        assert budget_file is not None
+        app.add_middleware(
+            BudgetMiddleware,
+            budget_file=budget_file,
+        )
 
     llm_model = AdkLlmAdapter(llm_client)
 

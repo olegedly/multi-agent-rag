@@ -6,6 +6,8 @@ services:
     env_file: ".env"
     expose:
       - "8000"
+    volumes:
+      - demo_budget:/data
 
   frontend:
     profiles: ["production"]
@@ -20,3 +22,4 @@ services:
 
 volumes:
   caddy_data:
+  demo_budget:

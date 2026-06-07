@@ -22,6 +22,9 @@ echo "PostgreSQL is ready."
 
 # ── Backend (native, hot-reload) ───────────────────────────
 echo "Starting backend (fastapi dev)..."
+# Disable daily token budget in dev — backend runs natively, not in Docker
+# (so /data/demo-budget.json doesn't exist). Query validation stays active.
+export DEMO_DISABLE_BUDGET=true
 uv run fastapi dev --port 8000 --host 0.0.0.0 &
 BACKEND_PID=$!
 
