@@ -43,14 +43,15 @@ The architecture is intentionally corpus-scoped: each conversation is bound to o
 7. As a visitor, I want to start a new conversation within the same corpus without leaving the route, so that I can explore multiple questions on the same topic.
 8. As a visitor, I want to return to the landing page to pick a different knowledge base, so that I can explore multiple corpora in separate sessions.
 9. As a visitor, I want each conversation to show a title so I can identify it, and I want a sidebar listing my current conversations in this corpus for easy switching.
-10. As a potential client, I want to see the system deployed at a live URL, so that I can evaluate it without running any code.
-11. As a potential client, I want to see clean, production-quality code in a public repository, so that I can evaluate engineering practices.
-12. As the developer, I want the LLM client to be abstracted behind a single interface that supports both OpenAI-format and Anthropic-format endpoints, so that I can explain to future clients that adapting to their preferred provider is a configuration change (`LLM_PROVIDER`, `LLM_API_KEY`, `LLM_BASE_URL`), not a rewrite.
-13. As the developer, I want the RAG pipeline to use pgvector with `corpus_id` scoping for semantic search, so that I can demonstrate vector database skills with multi-corpus isolation.
-14. As the developer, I want the MCP server to accept a `corpus_id` parameter so tools operate within the correct scope, and to be independently runnable and testable.
-15. As the developer, I want the system to run in Docker Compose with a single command, so that deployment is reproducible.
-16. As the developer, I want ADK tracing instrumented on all agent calls, so that I can debug and demonstrate observability awareness.
-17. As the developer, I want the frontend to be a vanilla SPA (no Next.js, no Vercel) served as static files, so that I retain full deployment flexibility.
+10. As a visitor, if I navigate to a stale or mistyped corpus slug, I want to stay on the route and see a friendly explanation with a button to the landing page, so that I understand what happened and can easily get back on track.
+11. As a potential client, I want to see the system deployed at a live URL, so that I can evaluate it without running any code.
+12. As a potential client, I want to see clean, production-quality code in a public repository, so that I can evaluate engineering practices.
+13. As the developer, I want the LLM client to be abstracted behind a single interface that supports both OpenAI-format and Anthropic-format endpoints, so that I can explain to future clients that adapting to their preferred provider is a configuration change (`LLM_PROVIDER`, `LLM_API_KEY`, `LLM_BASE_URL`), not a rewrite.
+14. As the developer, I want the RAG pipeline to use pgvector with `corpus_id` scoping for semantic search, so that I can demonstrate vector database skills with multi-corpus isolation.
+15. As the developer, I want the MCP server to accept a `corpus_id` parameter so tools operate within the correct scope, and to be independently runnable and testable.
+16. As the developer, I want the system to run in Docker Compose with a single command, so that deployment is reproducible.
+17. As the developer, I want ADK tracing instrumented on all agent calls, so that I can debug and demonstrate observability awareness.
+18. As the developer, I want the frontend to be a vanilla SPA (no Next.js, no Vercel) served as static files, so that I retain full deployment flexibility.
 
 ## Implementation Decisions
 
@@ -59,9 +60,9 @@ The architecture is intentionally corpus-scoped: each conversation is bound to o
 ```
 Landing Page
   │
-  ├── /corpora/alpha ─── Corpus-specific route
-  ├── /corpora/beta  ─── Corpus-specific route
-  └── /corpora/gamma ─── Corpus-specific route
+  ├── /corpora/us-tax-code ─── Corpus-specific route (by slug)
+  ├── /corpora/eu-ai-act  ─── Corpus-specific route (by slug)
+  └── /corpora/uk-civil-procedure ─── Corpus-specific route (by slug)
         │
 SolidJS SPA ──AG-UI/SSE──▶ FastAPI ──▶ Google ADK Orchestrator
   (@tanstack/ai-solid,     (create_app()    ├── Researcher (corpus-scoped)
@@ -110,7 +111,7 @@ The client is config-driven: `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, and `LL
 
 Standard FastAPI application assembled via the `create_app()` factory with:
 - `POST /api/chat` — mounted via `ag_ui_adk.add_adk_fastapi_endpoint()`, accepts AG-UI `RunAgentInput` (which includes the active corpus ID), invokes the ADK agent with corpus-scoped context, returns streaming AG-UI events over SSE
-- `GET /api/corpora` — returns the list of available knowledge bases and their metadata (id, name, description, route slug)
+- `GET /api/corpora` — returns the list of available knowledge bases and their metadata: a persistent `id` (UUIDv4 used internally for DB scoping, MCP tool params, and chunk metadata), a `slug` (human-readable route segment, e.g. `/corpora/us-tax-code`, mutable), a `name` (display name shown on landing cards and headers, mutable), and a `description`
 - `GET /api/health` — health check
 - `GET /capabilities` — agent capability discovery (added by AG-UI middleware)
 - `POST /agents/state` — experimental thread state retrieval (added by AG-UI middleware)
@@ -154,8 +155,8 @@ Agent thinking and intermediate results are streamed via ADK's built-in event sy
 
 A Vite + SolidJS SPA with route-based corpus selection:
 
-- **Landing page** (`/`): Introduces the product. Displays available knowledge bases as navigable cards (name, description, entry point). Clicking a card navigates to `/corpora/<corpusId>`. The list is fetched from `GET /api/corpora` on load and can be updated by adding new corpus entries to the backend configuration.
-- **Corpus route** (`/corpora/:corpusId`): Dedicated chat interface for the selected knowledge base. The corpus name is displayed prominently in the header. Conversations created here are bound to this corpus. New conversations started within this route remain in the same corpus.
+- **Landing page** (`/`): Introduces the product. Displays available knowledge bases as navigable cards showing the display name and description. Clicking a card navigates to `/corpora/<slug>`. The list is fetched from `GET /api/corpora` on load and can be updated by adding new corpus entries to the backend configuration.
+- **Corpus route** (`/corpora/:slug`): Dedicated chat interface for the selected knowledge base. On mount, the frontend looks up the slug against the corpus list. If found, the corpus name is displayed prominently in the header and the UUID is used as `corpusId` in chat requests and conversation records. If the slug does not match any configured corpus, the route renders in-place with a friendly message explaining the corpus doesn't exist or its address has changed, alongside a button labeled "Browse available knowledge bases" that navigates to the landing page.
 - **No in-chat corpus dropdown.** The active corpus is set by the route and cannot be changed mid-conversation.
 - Chat input area (auto-growing textarea + submit and stop buttons)
 - Streaming message display via user/assistant text bubbles
@@ -165,7 +166,7 @@ A Vite + SolidJS SPA with route-based corpus selection:
 - Typing indicator (animated ellipsis) shown while the LLM is generating a response
 - Error banner for LLM errors and localStorage quota warnings
 - Conversation sidebar (left panel): lists all conversations for the current corpus by auto-generated title, newest first. Current conversation highlighted. Two-step delete confirmation (hover → trash icon → confirm/cancel). New conversation button at top. Mobile-responsive with an overlay backdrop.
-- Conversation persistence via `localStorage` with per-conversation keys (`conversation:<uuid>`). `LS_LAST_OPENED` tracks the most recently active conversation. Data model: `{ id, corpusId, title, createdAt, messages[] }` — `corpusId` is included on every conversation record. When the user enters a corpus route (`/corpora/:corpusId`), the store loads all conversations from localStorage and filters to those matching the route's `corpusId`. Switching routes loads a different corpus's conversations — the persisted data is the same global key namespace, only the filter changes. This preserves the existing per-key localStorage persistence pattern while adding corpus awareness. Title auto-generated from first user message (~50 chars, word-bounded). `beforeunload` safety net ensures saves survive accidental navigation. LM Studio UI is the reference.
+- Conversation persistence via `localStorage` with per-conversation keys (`conversation:<uuid>`). `LS_LAST_OPENED` tracks the most recently active conversation. Data model: `{ id, corpusId, title, createdAt, messages[] }` — `corpusId` (UUIDv4) is included on every conversation record. When the user enters a corpus route (`/corpora/:slug`), the frontend resolves the slug to its UUID, loads all conversations from localStorage, and filters to those matching the resolved `corpusId`. Switching routes loads a different corpus's conversations — the persisted data is the same global key namespace, only the filter changes. This preserves the existing per-key localStorage persistence pattern while adding corpus awareness. Title auto-generated from first user message (~50 chars, word-bounded). `beforeunload` safety net ensures saves survive accidental navigation. LM Studio UI is the reference.
 - Dark/light theme toggle, persisted in localStorage
 - Tailwind CSS for styling (no component library dependency)
 
@@ -197,16 +198,23 @@ Pipeline: `git push` → GitHub Actions builds + pushes both images → Coolify 
 
 ### RAG Dataset
 
-The knowledge base comprises multiple curated, authoritative, civilian-facing corpora. Each corpus is a standalone collection of documents on a specific domain, selected for accuracy, public accessibility, and clear structure. Each corpus is assigned a stable `corpus_id` identifier used throughout the system for retrieval scoping.
+The knowledge base comprises multiple curated, authoritative, civilian-facing corpora. Each corpus is a standalone collection of documents on a specific domain, selected for accuracy, public accessibility, and clear structure.
+
+Each corpus has three identifiers:
+- A **persistent `corpus_id`** (UUIDv4) — used internally for DB scoping, MCP tool parameters, chunk metadata, and conversation records. This never changes once assigned.
+- A **human-readable `slug`** — used in the URL (`/corpora/<slug>`) to provide clean, memorable routes. Mutable: changing the slug breaks existing bookmarks, which is acceptable collateral damage (handled gracefully — see below).
+- A **`name`** — a human-readable display label shown on landing page cards, headers, and conversation context. Mutable independently of the slug.
 
 Each corpus:
 - Is independently ingestible via its own seeding script
-- Carries a stable `corpus_id` assigned at ingestion time
+- Carries a stable `corpus_id` (UUIDv4) assigned at ingestion time
 - Is chunked and embedded into the shared pgvector store, with `corpus_id` on every chunk
-- Is queried in isolation — retrieval is always filtered by the active corpus
+- Is queried in isolation — retrieval is always filtered by the active `corpus_id`
 - Is self-contained: conversations, citations, and evidence are drawn from that corpus alone
 
 Documents within each corpus are pulled as markdown or text, chunked (~500-token chunks, 50-token overlap), embedded, and upserted into pgvector via per-corpus seeding scripts (`scripts/seed_<corpus_id>_knowledge_base.py`).
+
+**Stale slug handling:** When a user navigates to a route whose slug does not match any configured corpus, the frontend does not force-redirect. Instead it renders the corpus route inline with an explanatory message — "This knowledge base doesn't exist or its address has changed" — and a button labeled "Browse available knowledge bases" that navigates to the landing page. This makes bookmark breakage a gentle, self-explanatory dead end rather than a confusing redirect.
 
 ### LLM Provider Strategy
 
@@ -261,7 +269,7 @@ The following corpus-scoped tests are planned:
 
 | Module | How | What it covers |
 |---|---|---|
-| `frontend/.../routes.ts` | `render` + route simulation | Landing page renders corpus cards; `/corpora/:corpusId` route sets active corpus from URL param; route change resets conversation list; invalid corpus ID shows error state — 6 tests |
+| `frontend/.../routes.ts` | `render` + route simulation | Landing page renders corpus cards; `/corpora/:slug` resolves slug to corpus UUID; unknown slug redirects to landing page with message; route change filters conversation list by corpus — 7 tests |
 | `rag/retriever.py` | Mock embedding client + in-memory chunk store | `retrieve(query, corpus_id=A)` returns only chunks from corpus A; omitting corpus_id raises; empty corpus returns empty results — 4 tests |
 | `mcp_server/tools.py` | `FakeRetriever` | `search_knowledge` with corpus_id returns scoped results; `search_knowledge` without corpus_id raises `ValueError`; `fetch_document` with mismatched corpus_id returns empty — 4 tests |
 | `agents/orchestrator.py` | `FakeLLMClient` + mock tools | Corpus ID propagates from orchestrator to each agent's tool calls; cross-corpus leakage returns no results; conversation context includes active corpus identifier — 4 tests |
@@ -273,6 +281,7 @@ The following corpus-scoped tests are planned:
 - **Corpus switching mid-conversation.** A conversation is bound to the corpus it was started in. To explore a different knowledge base, the user returns to the landing page and starts a new conversation.
 - **In-chat corpus dropdown or selector.** Corpus selection is route-based only.
 - **Cross-corpus conversation switching at the route level.** Conversations from different corpora live in the same localStorage store, but the UI never shows conversations from more than one corpus at once — the route controls which corpus is active, and the conversation list is filtered accordingly.
+- **Slug immutability guarantees.** Slugs are mutable. Renaming a slug may break bookmarks; the frontend handles stale slugs with a graceful redirect to the landing page.
 - Production user authentication (the demo is open-access; auth can be added later per client requirements). Token abuse prevention is handled via rate-limiting (see Further Notes).
 - Multi-tenancy or per-user RAG indexes
 - Fine-tuning any LLM
