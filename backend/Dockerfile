@@ -26,6 +26,8 @@ COPY --from=deps /usr/local/lib/python3.13/site-packages \
                  /usr/local/lib/python3.13/site-packages
 
 COPY backend/ /app/backend/
+COPY corpora/ /app/corpora/
+COPY scripts/ /app/scripts/
 
 WORKDIR /app
 

@@ -67,86 +67,82 @@ def today_str() -> str:
     return date.fromtimestamp(datetime.now(timezone.utc).timestamp()).isoformat()
 
 
-# ── Query Validation Middleware ──────────────────────────────────────────────
+# ── Chat Guard Middleware ─────────────────────────────────────────────────────
 
 
-class QueryValidationMiddleware(BaseHTTPMiddleware):
-    """FastAPI middleware that rejects requests with long or too-many user messages.
+class ChatGuard(BaseHTTPMiddleware):
+    """Combined pre-chat guard: budget check + query validation.
 
-    Checks every user message in the chat request body against configured limits.
-    Returns ``422 Unprocessable Entity`` with a clear error message on violation.
+    Guards all ``POST /api/chat`` requests.  Reads the body once and runs both
+    checks before forwarding to the app:
+
+    1. Budget check — short-circuits with 429 before parsing the body when
+       the daily token budget is exhausted.  Skipped when *budget_file* is
+       ``None`` (budget disabled).
+    2. Query validation — parses the AG-UI message format, checks user message
+       length and count, returns 422 on violation.
     """
 
-    def __init__(self, app: ASGIApp, max_query_length: int, max_user_messages: int):
+    def __init__(
+        self,
+        app: ASGIApp,
+        max_query_length: int,
+        max_user_messages: int,
+        budget_file: BudgetFile | None = None,
+    ):
         super().__init__(app)
         self.max_query_length = max_query_length
         self.max_user_messages = max_user_messages
+        self.budget_file = budget_file
 
     async def dispatch(self, request: Request, call_next):
-        if request.url.path.startswith("/api/chat") and request.method == "POST":
-            body = await request.body()
-            try:
-                payload = json.loads(body)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                return await call_next(request)
+        if not (request.url.path.startswith("/api/chat") and request.method == "POST"):
+            return await call_next(request)
 
-            user_msgs = [
-                msg
-                for msg in payload.get("messages", [])
-                if isinstance(msg, dict) and msg.get("role", "user") == "user"
-            ]
+        # 1. Budget check — fast path, no body parsing
+        if self.budget_file is not None and self.budget_file.is_exhausted():
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Daily demo budget reached. Try again tomorrow."},
+            )
 
-            # Check message count
-            if len(user_msgs) > self.max_user_messages:
+        # 2. Parse body and validate
+        body = await request.body()
+        try:
+            payload = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return await call_next(request)
+
+        user_msgs = [
+            msg
+            for msg in payload.get("messages", [])
+            if isinstance(msg, dict) and msg.get("role", "user") == "user"
+        ]
+
+        # Check message count
+        if len(user_msgs) > self.max_user_messages:
+            return JSONResponse(
+                status_code=422,
+                content={
+                    "detail": (
+                        f"Conversation exceeds the user message limit ({len(user_msgs)} sent vs "
+                        f"{self.max_user_messages} allowed)."
+                    )
+                },
+            )
+
+        # Check each user message length
+        for msg in user_msgs:
+            content = msg.get("content", "")
+            if len(content) > self.max_query_length:
                 return JSONResponse(
                     status_code=422,
                     content={
                         "detail": (
-                            f"Conversation exceeds the user message limit ({len(user_msgs)} sent vs "
-                            f"{self.max_user_messages} allowed)."
+                            f"User message exceeds maximum length "
+                            f"({len(content)} > {self.max_query_length} characters)."
                         )
                     },
                 )
 
-            # Check each user message length
-            for msg in user_msgs:
-                content = msg.get("content", "")
-                if len(content) > self.max_query_length:
-                    return JSONResponse(
-                        status_code=422,
-                        content={
-                            "detail": (
-                                f"User message exceeds maximum length "
-                                f"({len(content)} > {self.max_query_length} characters)."
-                            )
-                        },
-                    )
-
-        return await call_next(request)
-
-
-# ── Budget Middleware ─────────────────────────────────────────────────────────
-
-
-class BudgetMiddleware(BaseHTTPMiddleware):
-    """ASGI middleware that returns 429 when the daily token budget is exhausted.
-
-    The budget is incremented by the LLM client's ``usage_callback`` after
-    each successful response — this middleware only performs a read-only
-    check on the request path.
-    """
-
-    def __init__(self, app: ASGIApp, budget_file: BudgetFile):
-        super().__init__(app)
-        self.budget_file = budget_file
-
-    async def dispatch(self, request: Request, call_next):
-        if request.url.path.startswith("/api/chat") and request.method == "POST":
-            if self.budget_file.is_exhausted():
-                return JSONResponse(
-                    status_code=429,
-                    content={
-                        "detail": "Daily demo budget reached. Try again tomorrow.",
-                    },
-                )
         return await call_next(request)

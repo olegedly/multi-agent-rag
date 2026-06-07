@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     postgres_host: str = "localhost"
     postgres_port: int = 5432
 
+    # Embedding provider — abstracted behind EmbeddingClient
+    embedding_model: str = ""
+    embedding_api_key: str = ""
+    embedding_base_url: str = ""
+    embedding_dimensions: int = 768
+
     # LLM provider — abstracted behind LLMClient
     llm_provider_type: str = ""  # "anthropic" | "openai"
     llm_model: str = ""

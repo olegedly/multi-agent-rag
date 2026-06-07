@@ -13,16 +13,18 @@ from fastapi import FastAPI
 from google.adk.agents import Agent
 
 from backend.config import Settings, get_settings
+from backend.corpus_config import CorporaConfig
 from backend.llm.adk_adapter import AdkLlmAdapter
 from backend.llm.factory import create_llm_client
 from backend.llm.protocol import LLMClient
 from backend.llm.transport import HttpTransport
-from backend.middleware import BudgetFile, BudgetMiddleware, QueryValidationMiddleware
+from backend.middleware import BudgetFile, ChatGuard
 
 
 def create_app(
     llm_client: LLMClient | None = None,
     settings: Settings | None = None,
+    corpora_config: CorporaConfig | None = None,
 ) -> FastAPI:
     """Build and return a configured FastAPI application.
 
@@ -34,6 +36,9 @@ def create_app(
         :func:`create_llm_client`.
     settings : optional
         Override settings (e.g. for tests). When ``None``, reads from ``.env``.
+    corpora_config : optional
+        Injected config for testing. When ``None`` (default), loads from
+        ``backend/corpora.yaml`` via :class:`CorporaConfig`.
 
     Returns
     -------
@@ -42,6 +47,9 @@ def create_app(
     """
     if settings is None:
         settings = get_settings()
+
+    if corpora_config is None:
+        corpora_config = CorporaConfig()
 
     # Collect transport references for lifespan cleanup
     transports: list[HttpTransport] = []
@@ -82,21 +90,16 @@ def create_app(
         llm_client.usage_callback = _record_usage
 
     # ------------------------------------------------------------------
-    # Middleware (order matters: outermost first)
-    #   BudgetMiddleware is outermost (added last) so a budget-exhausted
-    #   429 short-circuits before parsing the request body.
+    # ChatGuard — single middleware for budget check + query validation.
+    # Reads the body once, checks budget first (no body parsing needed
+    # when exhausted), then validates user messages.
     # ------------------------------------------------------------------
     app.add_middleware(
-        QueryValidationMiddleware,
+        ChatGuard,
         max_query_length=settings.demo_max_query_length,
         max_user_messages=settings.demo_max_user_messages,
+        budget_file=budget_file,  # ``None`` when budget disabled
     )
-    if not settings.demo_disable_budget:
-        assert budget_file is not None
-        app.add_middleware(
-            BudgetMiddleware,
-            budget_file=budget_file,
-        )
 
     llm_model = AdkLlmAdapter(llm_client)
 
@@ -118,6 +121,14 @@ def create_app(
     # Mounts POST /api/chat as AG-UI endpoint, plus GET /capabilities
     # and POST /agents/state
     add_adk_fastapi_endpoint(app, adk_agent, path="/api/chat")
+
+    # ------------------------------------------------------------------
+    # Corpus registry
+    # ------------------------------------------------------------------
+    @app.get("/api/corpora")
+    async def list_corpora():
+        """Return the list of available knowledge bases."""
+        return corpora_config.list()
 
     # ------------------------------------------------------------------
     # Health check

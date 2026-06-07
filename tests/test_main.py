@@ -8,8 +8,29 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.config import Settings
+from backend.corpus_config import CorporaConfig
 from backend.main import create_app
 from tests.fakes import FakeLLMClient
+
+
+SAMPLE_CORPORA = [
+    {
+        "id": "a1b2c3d4-1234-5678-9abc-def012345678",
+        "slug": "mcp-spec",
+        "name": "MCP Specification",
+        "description": "MCP spec and ADK documentation",
+        "chunker": "paragraph",
+        "documents": "corpora/mcp-spec/*.md",
+    },
+    {
+        "id": "b2c3d4e5-2345-6789-abcd-ef0123456789",
+        "slug": "eu-ai-act",
+        "name": "EU AI Act",
+        "description": "European Union AI regulation",
+        "chunker": "paragraph",
+        "documents": "corpora/eu-ai-act/*.md",
+    },
+]
 
 
 # ── Fixture ──────────────────────────────────────────────────────────────────
@@ -22,6 +43,7 @@ def client(tmp_path):
         settings=Settings(
             demo_budget_file=str(tmp_path / "budget.json"),
         ),
+        corpora_config=CorporaConfig.from_dicts(SAMPLE_CORPORA),
     )
     with TestClient(app) as c:
         yield c
@@ -47,6 +69,45 @@ class TestHealth:
 
 
 # ── Chat endpoint ────────────────────────────────────────────────────────────
+
+
+# ── Corpora endpoint ────────────────────────────────────────────────────────
+
+
+class TestCorporaEndpoint:
+    def test_returns_200(self, client: TestClient) -> None:
+        response = client.get("/api/corpora")
+        assert response.status_code == 200
+
+    def test_returns_corpus_list(self, client: TestClient) -> None:
+        response = client.get("/api/corpora")
+        data = response.json()
+        assert len(data) == 2
+        assert data[0]["slug"] == "mcp-spec"
+        assert data[1]["slug"] == "eu-ai-act"
+
+    def test_each_corpus_has_required_fields(self, client: TestClient) -> None:
+        response = client.get("/api/corpora")
+        data = response.json()
+        for entry in data:
+            assert "id" in entry
+            assert "slug" in entry
+            assert "name" in entry
+            assert "description" in entry
+            assert "chunker" in entry
+            assert "documents" in entry
+
+    def test_empty_when_no_corpora_configured(self, tmp_path) -> None:
+        app = create_app(
+            llm_client=FakeLLMClient(),
+            settings=Settings(
+                demo_budget_file=str(tmp_path / "budget.json"),
+            ),
+            corpora_config=CorporaConfig.from_dicts([]),
+        )
+        with TestClient(app) as c:
+            response = c.get("/api/corpora")
+            assert response.json() == []
 
 
 class TestChatEndpoint:

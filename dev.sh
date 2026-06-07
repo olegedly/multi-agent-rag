@@ -6,19 +6,35 @@ cleanup() {
   echo "Shutting down..."
   docker compose -f docker-compose.base.yml -f docker-compose.dev-override.yml down
   [ -n "$BACKEND_PID" ] && kill "$BACKEND_PID" 2>/dev/null
+  [ -n "$PGWEB_PID" ] && kill "$PGWEB_PID" 2>/dev/null
   exit 0
 }
 trap cleanup SIGINT SIGTERM
+
+# Source .env so native tools inherit DB credentials
+# shellcheck disable=SC1091
+[ -f .env ] && set -a && source .env && set +a
 
 # ── Database (Docker) ──────────────────────────────────────
 echo "Starting PostgreSQL (pgvector)..."
 docker compose -f docker-compose.base.yml -f docker-compose.dev-override.yml up -d db
 
 echo "Waiting for PostgreSQL to be healthy..."
-until docker compose -f docker-compose.base.yml -f docker-compose.dev-override.yml exec db pg_isready -U "${POSTGRES_USER:-postgres}" --quiet 2>/dev/null; do
+until docker compose -f docker-compose.base.yml -f docker-compose.dev-override.yml exec db pg_isready -U "$POSTGRES_USER" --quiet 2>/dev/null; do
   sleep 1
 done
 echo "PostgreSQL is ready."
+
+# ── pgweb (native) ─────────────────────────────────────────
+echo "Starting pgweb (PostgreSQL GUI)..."
+pgweb \
+  --host "$POSTGRES_HOST" \
+  --db "$POSTGRES_DB" \
+  --user "$POSTGRES_USER" \
+  --pass "$POSTGRES_PASSWORD" \
+  --port "$POSTGRES_PORT" &
+PGWEB_PID=$!
+echo "pgweb GUI → http://127.0.0.1:8081"
 
 # ── Backend (native, hot-reload) ───────────────────────────
 echo "Starting backend (fastapi dev)..."

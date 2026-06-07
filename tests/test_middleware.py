@@ -185,8 +185,8 @@ class TestBudgetDevBypass:
             response = c.post("/api/chat", json=payload)
             assert response.status_code == 200
 
-    def test_middleware_not_registered_when_disabled(self, tmp_path) -> None:
-        """When disabled, no BudgetMiddleware instance is added."""
+    def test_budget_check_skipped_when_disabled(self, tmp_path) -> None:
+        """When budget disabled, ChatGuard still validates queries (no budget check)."""
         app = create_app(
             llm_client=FakeLLMClient(),
             settings=Settings(
@@ -194,9 +194,11 @@ class TestBudgetDevBypass:
                 demo_budget_file=str(tmp_path / "budget.json"),
             ),
         )
-        # Check no BudgetMiddleware in the user middleware stack
-        mids = [m.__class__.__name__ for m in app.user_middleware]
-        assert "BudgetMiddleware" not in mids
+        mids = [m.cls for m in app.user_middleware]
+        from backend.middleware import ChatGuard as CG
+        assert CG in mids
+        # Old separate middleware classes are gone — only ChatGuard remains
+        assert len(mids) == 1
 
     def test_query_still_active_when_budget_disabled(self, tmp_path) -> None:
         """Query validation still runs even with budget disabled."""
