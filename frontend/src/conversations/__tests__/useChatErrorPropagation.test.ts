@@ -114,7 +114,7 @@ describe("useChat error propagation", () => {
   // ── Standard Response: 422 with detail ─────────────────────────────
 
   it("422 detail reaches error signal with standard Response", async () => {
-    const detail = "Too many user messages (3). Maximum allowed is 2.";
+    const detail = "Conversation exceeds the user message limit (3 sent vs 2 allowed).";
     globalThis.fetch = (() =>
       Promise.resolve(
         new Response(JSON.stringify({ detail }), {
@@ -139,7 +139,7 @@ describe("useChat error propagation", () => {
       });
     });
 
-    expect(result.errorMsg).toContain("Too many user messages");
+    expect(result.errorMsg).toContain("Conversation exceeds the user message limit");
   });
 
   // ── Non-JSON error body ────────────────────────────────────────────
