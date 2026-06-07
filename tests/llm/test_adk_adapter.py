@@ -4,15 +4,24 @@ Uses FakeLLMClient to verify the translation between ADK types and
 the protocol Message / LLMResponse types without any HTTP calls.
 """
 
-import pytest
+from google.adk.models.llm_request import LlmRequest
 from google.genai import types
 
-from backend.llm.adk_adapter import AdkLlmAdapter, _extract_system, _to_protocol_messages
-from backend.llm.protocol import Message
-from google.adk.models.llm_request import LlmRequest
-from google.adk.models.llm_response import LlmResponse
-
+from backend.llm.adk_adapter import (
+    AdkLlmAdapter,
+    _extract_system,
+    _to_protocol_messages,
+)
+from backend.llm.protocol import Message, Usage
 from tests.fakes import CollectingLLMClient, FakeLLMClient
+
+
+class FireCallbackLLMClient(FakeLLMClient):
+    """FakeLLMClient that carries a usage_callback for testing."""
+
+    def __init__(self, responses: list[str] | None = None):
+        super().__init__(responses)
+        self.usage_callback = None
 
 
 # ── Helper to build an LlmRequest ────────────────────────────────────────────
@@ -101,9 +110,7 @@ class TestExtractSystem:
 
     def test_extracts_from_content(self) -> None:
         config = types.GenerateContentConfig(
-            system_instruction=types.Content(
-                parts=[types.Part(text="from content")]
-            )
+            system_instruction=types.Content(parts=[types.Part(text="from content")])
         )
         contents = [types.Content(role="user", parts=[types.Part(text="hi")])]
         request = LlmRequest(contents=contents, config=config)
@@ -118,12 +125,61 @@ class TestExtractSystem:
         assert _extract_system(request) == "from part"
 
     def test_extracts_from_list_of_strings(self) -> None:
-        config = types.GenerateContentConfig(
-            system_instruction=["first", " second"]
-        )
+        config = types.GenerateContentConfig(system_instruction=["first", " second"])
         contents = [types.Content(role="user", parts=[types.Part(text="hi")])]
         request = LlmRequest(contents=contents, config=config)
         assert _extract_system(request) == "first\n second"
+
+
+# ── Usage callback seam ────────────────────────────────────────────────────
+
+
+class TestUsageCallback:
+    """The optional usage_callback fires with the accumulated Usage after
+    each generate completes. This is the seam for the daily token budget."""
+
+    async def test_fires_after_streaming(self) -> None:
+        client = FireCallbackLLMClient(responses=["abc"])
+        recorded = []
+
+        async def cb(usage: Usage) -> None:
+            recorded.append(usage)
+
+        client.usage_callback = cb
+        adapter = AdkLlmAdapter(client)
+
+        request = _make_request(["hi"])
+        async for _ in adapter.generate_content_async(request, stream=True):
+            pass
+
+        assert len(recorded) == 1
+        assert recorded[0].input_tokens == 10
+        assert recorded[0].output_tokens == 3  # len("abc")
+
+    async def test_does_not_fire_when_not_set(self) -> None:
+        client = FireCallbackLLMClient(responses=["abc"])
+        adapter = AdkLlmAdapter(client)
+        request = _make_request(["hi"])
+        # Should not raise
+        async for _ in adapter.generate_content_async(request, stream=True):
+            pass
+
+    async def test_fires_after_non_streaming(self) -> None:
+        client = FireCallbackLLMClient(responses=["xyz"])
+        recorded = []
+
+        async def cb(usage: Usage) -> None:
+            recorded.append(usage)
+
+        client.usage_callback = cb
+        adapter = AdkLlmAdapter(client)
+
+        request = _make_request(["hi"])
+        async for _ in adapter.generate_content_async(request, stream=False):
+            pass
+
+        assert len(recorded) == 1
+        assert recorded[0].output_tokens == 3  # len("xyz")
 
 
 # ── Adapter tests ────────────────────────────────────────────────────────────
@@ -141,6 +197,8 @@ class TestAdkLlmAdapter:
 
         assert len(responses) == 1
         final = responses[0]
+        assert final.content is not None
+        assert final.content.parts is not None
         assert final.content.parts[0].text == "Hello world"
         assert final.partial is False
 
@@ -162,7 +220,8 @@ class TestAdkLlmAdapter:
         parts: list[str] = []
         final_partial = None
         async for response in adapter.generate_content_async(request, stream=True):
-            text = response.content.parts[0].text if response.content.parts else ""
+            content = response.content
+            text = content.parts[0].text if content is not None and content.parts else ""
             if text:
                 parts.append(text)
             if not response.partial:

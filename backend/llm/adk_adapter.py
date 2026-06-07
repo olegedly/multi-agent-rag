@@ -90,6 +90,9 @@ class AdkLlmAdapter(BaseLlm):
 
     Injects the concrete LLMClient via the constructor — no subclassing
     needed when switching providers.
+
+    After each successful generate the adapter fires
+    ``client.usage_callback`` (if set) with the final ``Usage``.
     """
 
     def __init__(self, client: LLMClient):
@@ -129,6 +132,9 @@ class AdkLlmAdapter(BaseLlm):
                 partial=False,
                 usage_metadata=usage_adk,
             )
+            # Fire usage callback after streaming completes
+            if accumulated_usage is not None and self._client.usage_callback is not None:
+                await self._client.usage_callback(accumulated_usage)
         else:
             response = await self._client.generate(messages, system=system)
             usage_adk = _usage_to_adk(response.usage)
@@ -140,3 +146,6 @@ class AdkLlmAdapter(BaseLlm):
                 partial=False,
                 usage_metadata=usage_adk,
             )
+            # Fire usage callback after non-streaming completes
+            if response.usage is not None and self._client.usage_callback is not None:
+                await self._client.usage_callback(response.usage)

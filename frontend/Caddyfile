@@ -9,11 +9,19 @@
         -Server
     }
 
-    # API routes — proxy to backend for everything under /api/
+    # Layer 1: IP rate limiting for all /api/ routes
+    # 10 req/min per IP, burst up to 20
     @api {
         path_regexp ^/api/
     }
     handle @api {
+        rate_limit {
+            zone api_rate {
+                key {remote_host}
+                events 10
+                window 1m
+            }
+        }
         reverse_proxy backend:8000
     }
 

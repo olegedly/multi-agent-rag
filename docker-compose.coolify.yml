@@ -4,6 +4,8 @@ services:
     pull_policy: always
     expose:
       - "8000"
+    volumes:
+      - "demo_budget:/data"
   frontend:
     image: "ghcr.io/olegedly/multi-agent-rag-fe:latest"
     pull_policy: always
@@ -13,3 +15,4 @@ services:
       - "caddy_data:/data"
 volumes:
   caddy_data: null
+  demo_budget: null
