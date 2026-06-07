@@ -9,12 +9,12 @@
         -Server
     }
 
-    # Layer 1: IP rate limiting for all /api/ routes
-    # 10 req/min per IP, burst up to 20
-    @api {
-        path_regexp ^/api/
+    # Layer 1: IP rate limiting — only POST /api/chat (the expensive endpoint)
+    @chat {
+        method POST
+        path /api/chat
     }
-    handle @api {
+    handle @chat {
         rate_limit {
             zone api_rate {
                 key {remote_host}
@@ -22,6 +22,14 @@
                 window 1m
             }
         }
+        reverse_proxy backend:8000
+    }
+
+    # Other /api/ routes (health, capabilities) — proxied without rate limit
+    @api {
+        path_regexp ^/api/
+    }
+    handle @api {
         reverse_proxy backend:8000
     }
 
