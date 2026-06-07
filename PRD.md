@@ -2,49 +2,54 @@
 
 ## Problem Statement
 
-I am an experienced full-stack developer and frontend specialist entering the AI engineering freelance market on Upwork. My research (~150 real postings, June 2026) confirms that the highest-value, lowest-competition niche is **MCP orchestration + multi-agent systems + RAG** — clients explicitly post jobs for "agents + MCP server + RAG + inter-agent communication." However, I have no shipped portfolio piece in this space. I need a single demonstrable project that proves I can:
+Organizations across the public and private sectors need intelligent research systems that can answer questions grounded in authoritative, curated knowledge — not sprawling web searches or unverified AI hallucinations. From compliance officers querying regulatory libraries to policy researchers navigating institutional archives, the demand for **grounded, cited, real-time research assistance** over well-defined knowledge bases is growing fast.
 
-1. Build production FastAPI backends with Pydantic
-2. Implement RAG with PostgreSQL + pgvector
-3. Build MCP servers as tool interfaces
-4. Orchestrate multi-agent systems with Google ADK
-5. Stream real-time agent output to a web UI
-6. Containerize and deploy the full stack
+Building such a system requires mastery of the modern AI engineering stack:
 
-Without this demo, every proposal is a promise. With it, every proposal includes a live link.
+1. Production FastAPI backends with Pydantic
+2. RAG with PostgreSQL + pgvector
+3. MCP servers as tool interfaces
+4. Multi-agent orchestration with Google ADK
+5. Real-time streaming agent output to a web UI
+6. Containerized, deployable full-stack applications
+7. Route-based, corpus-scoped retrieval across multiple curated knowledge bases
+
+This project demonstrates all of the above in a single, deployable system: a multi-agent research assistant that serves grounded, cited answers from multiple curated public knowledge bases — each a first-class destination with its own route, its own corpus, and its own conversations.
 
 ## Solution
 
 An interactive multi-agent research system where:
 
-- A user submits a research question via a web dashboard
+- A landing page introduces the system and lists the available curated knowledge bases
+- Selecting a knowledge base navigates to a dedicated route for that corpus
+- The user submits a research question within the context of that corpus
 - Three specialist AI agents (Researcher, Critic, Synthesizer) collaborate via ADK to answer it
-- Agents search a pgvector knowledge base (RAG over the MCP specification + ADK documentation)
+- Agents search only the active corpus in a pgvector knowledge base — retrieval is scoped by `corpus_id`
 - The entire reasoning process streams to the dashboard in real-time — tool calls, intermediate findings, final synthesis
 - The system is config-driven: LLM provider, model, and API endpoint are environment variables
 - The frontend is a Vite + SolidJS SPA served as static files, connecting to the backend via `@tanstack/ai-solid`'s `useChat` hook over the AG-UI protocol
 - The system is Dockerized for deployment, with a native `fastapi dev` workflow for local development
 
-The demo is **self-referential**: it uses ADK + MCP to answer questions about ADK + MCP. This signals deep domain competence to potential clients.
+The architecture is intentionally corpus-scoped: each conversation is bound to one corpus from start to finish, every retrieval query carries the active corpus identifier, and adding a new knowledge base is primarily an ingestion and configuration task.
 
 ## User Stories
 
-1. As a visitor to the demo, I want to type a natural-language research question into a web dashboard, so that I can see how the system handles my query.
-2. As a visitor, I want to see each agent's reasoning and tool calls streamed in real-time, so that I understand the multi-agent collaboration process.
-3. As a visitor, I want the final answer to include citations from the knowledge base, so that I trust the output is grounded and not hallucinated.
-4. As a potential client, I want to query the system about MCP or ADK topics, so that I can assess the depth of relevant domain knowledge.
-5. As a potential client, I want to see the system deployed at a live URL, so that I can evaluate it without running any code.
-6. As a potential client, I want to see clean, production-quality code in a public repository, so that I can evaluate engineering practices.
-7. As the developer, I want the LLM client to be abstracted behind a single interface that supports both OpenAI-format and Anthropic-format endpoints, so that I can explain to future clients that adapting to their preferred provider is a configuration change (`LLM_PROVIDER`, `LLM_API_KEY`, `LLM_BASE_URL`), not a rewrite.
-8. As the developer, I want the RAG pipeline to use pgvector for semantic search, so that I can demonstrate vector database skills.
-9. As the developer, I want the MCP server to be independently runnable and testable, so that I can reuse it in future projects.
-10. As the developer, I want the system to run in Docker Compose with a single command, so that deployment is reproducible.
-11. As the developer, I want ADK tracing instrumented on all agent calls, so that I can debug and demonstrate observability awareness.
-12. As a user, I want the dashboard to persist my conversation history in browser localStorage, so that I can return to previous research sessions without losing context.
-13. As a user, I want each conversation to show an auto-generated title based on the first user message, so that I can identify conversations at a glance.
-14. As a user, I want a sidebar listing all my past conversations, so that I can switch between them easily.
-15. As a user, I want to delete individual conversations from the sidebar, so that I can clean up old sessions.
-16. As a user, I want to start a new conversation without losing my existing ones, so that I can explore multiple research topics.
+1. As a visitor, I want to land on a main page that introduces the system and shows the available knowledge bases, so that I can choose where to start my research.
+2. As a visitor, I want to click on a knowledge base card to navigate to its dedicated route, so that I enter a research session scoped to that corpus.
+3. As a visitor, I want to type a natural-language research question and have the system retrieve context from the active knowledge base only, so that answers are grounded in the right source.
+4. As a visitor, I want to see each agent's reasoning and tool calls streamed in real-time, so that I understand the multi-agent collaboration process.
+5. As a visitor, I want the final answer to include citations from the active knowledge base, so that I trust the output is grounded and not hallucinated.
+6. As a visitor, I want to know which corpus the current conversation belongs to, so that I don't confuse answers across knowledge bases.
+7. As a visitor, I want to start a new conversation within the same corpus without leaving the route, so that I can explore multiple questions on the same topic.
+8. As a visitor, I want to return to the landing page to pick a different knowledge base, so that I can explore multiple corpora in separate sessions.
+9. As a visitor, I want each conversation to show a title so I can identify it, and I want a sidebar listing my current conversations in this corpus for easy switching.
+10. As a potential client, I want to see the system deployed at a live URL, so that I can evaluate it without running any code.
+11. As a potential client, I want to see clean, production-quality code in a public repository, so that I can evaluate engineering practices.
+12. As the developer, I want the LLM client to be abstracted behind a single interface that supports both OpenAI-format and Anthropic-format endpoints, so that I can explain to future clients that adapting to their preferred provider is a configuration change (`LLM_PROVIDER`, `LLM_API_KEY`, `LLM_BASE_URL`), not a rewrite.
+13. As the developer, I want the RAG pipeline to use pgvector with `corpus_id` scoping for semantic search, so that I can demonstrate vector database skills with multi-corpus isolation.
+14. As the developer, I want the MCP server to accept a `corpus_id` parameter so tools operate within the correct scope, and to be independently runnable and testable.
+15. As the developer, I want the system to run in Docker Compose with a single command, so that deployment is reproducible.
+16. As the developer, I want ADK tracing instrumented on all agent calls, so that I can debug and demonstrate observability awareness.
 17. As the developer, I want the frontend to be a vanilla SPA (no Next.js, no Vercel) served as static files, so that I retain full deployment flexibility.
 
 ## Implementation Decisions
@@ -52,14 +57,20 @@ The demo is **self-referential**: it uses ADK + MCP to answer questions about AD
 ### Architecture Overview
 
 ```
+Landing Page
+  │
+  ├── /corpora/alpha ─── Corpus-specific route
+  ├── /corpora/beta  ─── Corpus-specific route
+  └── /corpora/gamma ─── Corpus-specific route
+        │
 SolidJS SPA ──AG-UI/SSE──▶ FastAPI ──▶ Google ADK Orchestrator
-  (@tanstack/ai-solid,     (create_app()    ├── Agent A (Researcher)
-   fetchServerSentEvents)   factory)        ├── Agent B (Critic)
-                                              └── Agent C (Synthesizer)
+  (@tanstack/ai-solid,     (create_app()    ├── Researcher (corpus-scoped)
+   fetchServerSentEvents)   factory)        ├── Critic (corpus-scoped)
+                                              └── Synthesizer (corpus-scoped)
                               │
                               ├── MCP Server (search_knowledge, fetch_document)
-                              │         └── pgvector RAG
-                              │               └── PostgreSQL
+                              │         └── pgvector RAG (corpus-filtered)
+                              │               └── PostgreSQL ── chunks with corpus_id
                               │
                               └── backend/llm/ layer
                                     ├── AdkLlmAdapter(BaseLlm)
@@ -98,45 +109,54 @@ The client is config-driven: `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, and `LL
 **3. FastAPI Backend (`backend/`)**
 
 Standard FastAPI application assembled via the `create_app()` factory with:
-- `POST /api/chat` — mounted via `ag_ui_adk.add_adk_fastapi_endpoint()`, accepts AG-UI `RunAgentInput`, invokes the ADK agent, returns streaming AG-UI events over SSE
+- `POST /api/chat` — mounted via `ag_ui_adk.add_adk_fastapi_endpoint()`, accepts AG-UI `RunAgentInput` (which includes the active corpus ID), invokes the ADK agent with corpus-scoped context, returns streaming AG-UI events over SSE
+- `GET /api/corpora` — returns the list of available knowledge bases and their metadata (id, name, description, route slug)
 - `GET /api/health` — health check
 - `GET /capabilities` — agent capability discovery (added by AG-UI middleware)
 - `POST /agents/state` — experimental thread state retrieval (added by AG-UI middleware)
 - Pydantic settings via `config.py` (reads `.env` for LLM config, Postgres credentials)
 - Application assembly via `create_app(llm_client, settings)` factory with dependency injection — tests pass a `FakeLLMClient` directly, no import-time patching. The module-level `app = create_app()` preserves `fastapi dev` compatibility. A FastAPI lifespan handler closes transport connections on shutdown.
 
+The `POST /api/chat` endpoint extracts the `corpus_id` from the incoming request and injects it into the ADK agent's session context, ensuring every tool call carries the active corpus identifier.
+
 **4. RAG Pipeline (`rag/`)**
 
 - Document chunking (recursive text splitter targeting ~500-token chunks with 50-token overlap)
+- Each chunk includes metadata: `corpus_id`, title, source URL, and document reference
 - Embedding via configurable embedding API (OpenAI-compatible client shape)
-- Storage in PostgreSQL with pgvector `VECTOR(1536)` column
+- Storage in PostgreSQL with pgvector `VECTOR(1536)` column and a `corpus_id` text column (indexed for fast filtering)
 - Production: managed Supabase instance; development: local `pgvector/pgvector:pg18` Docker container
 - IVFFlat index on the embedding column for fast cosine similarity search
-- Query flow: embed user question → `SELECT ... ORDER BY embedding <=> $query LIMIT 5` → return chunks as context
+- Query flow: embed user question → filter by `corpus_id = <active_corpus>` → `SELECT ... WHERE corpus_id = $corpus_id ORDER BY embedding <=> $query LIMIT 5` → return chunks as context
+- Adding a new corpus is an ingestion and configuration task: run the seeding script for the new source documents with its `corpus_id`, register it in the corpus registry, and the frontend picks it up from `GET /api/corpora`
 
 **5. MCP Server (`mcp_server/`)**
 
 A Python MCP server using the official `mcp` SDK exposing:
-- `search_knowledge(query: str, top_k: int = 5)` — semantic search over the RAG index
-- `fetch_document(chunk_ids: list[str])` — retrieve full document chunks by ID
+- `search_knowledge(query: str, corpus_id: str, top_k: int = 5)` — semantic search over the RAG index, scoped to the given corpus
+- `fetch_document(chunk_ids: list[str], corpus_id: str)` — retrieve full document chunks by ID, validated against the active corpus
 
-Both tools are thin wrappers over the RAG pipeline. The MCP server can run standalone (for testing with MCP Inspector or Claude Desktop) or embedded in the FastAPI process.
+Both tools accept and enforce a `corpus_id` parameter. The MCP server can run standalone (for testing with MCP Inspector or Claude Desktop) or embedded in the FastAPI process.
 
 **6. Google ADK Agent System (`agents/`)**
 
-Three specialist agents, each defined as an ADK `LlmAgent`:
+Three specialist agents, each defined as an ADK `LlmAgent` and each operating within the active corpus:
 
-- **Agent A (Researcher):** "You search the knowledge base for facts, dates, definitions, and specifications relevant to the user's question. Use the `search_knowledge` tool. Report your findings with exact citations."
-- **Agent B (Critic):** "You review Agent A's findings. Identify gaps, contradictions, weak citations, or missing context. Use `search_knowledge` for follow-up queries and `fetch_document` to read full chunks. Produce a critique with specific requests for clarification."
-- **Agent C (Synthesizer):** "You produce the final answer. Synthesize Agent A's research and Agent B's critique into a concise, cited answer. Structure: summary, key findings with citations, confidence assessment."
+- **Corpus Researcher:** "You search the active knowledge base for facts, dates, definitions, and specifications relevant to the user's question. Use the `search_knowledge` tool with the provided corpus ID. Report your findings with exact citations."
+- **Corpus Critic:** "You review the Researcher's findings against the active corpus. Identify gaps, contradictions, weak citations, or missing context. Use `search_knowledge` for follow-up queries (always with the corpus ID) and `fetch_document` to read full chunks. Produce a critique with specific requests for clarification."
+- **Corpus Synthesizer:** "You produce the final answer. Synthesize the Researcher's findings and the Critic's review into a concise, cited answer grounded in the active corpus. Structure: summary, key findings with citations, confidence assessment."
 
-An ADK `SequentialAgent` orchestrates the flow: Researcher → Critic → Synthesizer. Each agent receives the previous agent's output in its context.
+An ADK `SequentialAgent` orchestrates the flow: Researcher → Critic → Synthesizer. Each agent receives the previous agent's output and the active corpus ID in its context. The corpus ID is injected at the orchestration layer, not hardcoded in individual agents.
 
 Agent thinking and intermediate results are streamed via ADK's built-in event system, which the AG-UI middleware converts to SSE events (`RUN_STARTED` → `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT`* → `TEXT_MESSAGE_END` → `RUN_FINISHED`).
 
 **7. SolidJS Frontend (`frontend/`)**
 
-A Vite + SolidJS SPA with:
+A Vite + SolidJS SPA with route-based corpus selection:
+
+- **Landing page** (`/`): Introduces the product. Displays available knowledge bases as navigable cards (name, description, entry point). Clicking a card navigates to `/corpora/<corpusId>`. The list is fetched from `GET /api/corpora` on load and can be updated by adding new corpus entries to the backend configuration.
+- **Corpus route** (`/corpora/:corpusId`): Dedicated chat interface for the selected knowledge base. The corpus name is displayed prominently in the header. Conversations created here are bound to this corpus. New conversations started within this route remain in the same corpus.
+- **No in-chat corpus dropdown.** The active corpus is set by the route and cannot be changed mid-conversation.
 - Chat input area (auto-growing textarea + submit and stop buttons)
 - Streaming message display via user/assistant text bubbles
 - Agent labels, tool call displays, and reasoning steps rendered in real-time as the multi-agent pipeline runs *(pending: integrated as part of the ADK agent frontend pipeline)*
@@ -144,12 +164,12 @@ A Vite + SolidJS SPA with:
 - Agent status indicators (thinking / searching / synthesizing / done), shown per agent as the pipeline progresses *(pending: requires agent metadata in the AG-UI event stream)*
 - Typing indicator (animated ellipsis) shown while the LLM is generating a response
 - Error banner for LLM errors and localStorage quota warnings
-- Conversation sidebar (left panel): lists all conversations by auto-generated title, newest first. Current conversation highlighted. Two-step delete confirmation (hover → trash icon → confirm/cancel). New conversation button at top. Mobile-responsive with an overlay backdrop.
-- Conversation persistence via localStorage (no backend storage). Data model: `{ id, title, createdAt, messages[] }`. Title auto-generated from first user message (~50 chars, word-bounded). `beforeunload` safety net ensures saves survive accidental navigation. LM Studio UI is the reference.
+- Conversation sidebar (left panel): lists all conversations for the current corpus by auto-generated title, newest first. Current conversation highlighted. Two-step delete confirmation (hover → trash icon → confirm/cancel). New conversation button at top. Mobile-responsive with an overlay backdrop.
+- Conversation persistence via `localStorage` with per-conversation keys (`conversation:<uuid>`). `LS_LAST_OPENED` tracks the most recently active conversation. Data model: `{ id, corpusId, title, createdAt, messages[] }` — `corpusId` is included on every conversation record. When the user enters a corpus route (`/corpora/:corpusId`), the store loads all conversations from localStorage and filters to those matching the route's `corpusId`. Switching routes loads a different corpus's conversations — the persisted data is the same global key namespace, only the filter changes. This preserves the existing per-key localStorage persistence pattern while adding corpus awareness. Title auto-generated from first user message (~50 chars, word-bounded). `beforeunload` safety net ensures saves survive accidental navigation. LM Studio UI is the reference.
 - Dark/light theme toggle, persisted in localStorage
 - Tailwind CSS for styling (no component library dependency)
 
-Connects to `POST /api/chat` via `@tanstack/ai-solid`'s `useChat` hook with `fetchServerSentEvents` adapter (AG-UI protocol over SSE).
+Connects to `POST /api/chat` via `@tanstack/ai-solid`'s `useChat` hook with `fetchServerSentEvents` adapter (AG-UI protocol over SSE). The `corpusId` is sent as part of the chat request from the route-level context.
 
 **8. Deployment**
 
@@ -177,52 +197,16 @@ Pipeline: `git push` → GitHub Actions builds + pushes both images → Coolify 
 
 ### RAG Dataset
 
-The knowledge base combines the **MCP specification** and the **Google ADK documentation**, pulled as markdown/text, chunked (~500-token chunks, 50-token overlap), embedded, and upserted into pgvector via a one-time seeding script (`scripts/seed_knowledge_base.py`).
+The knowledge base comprises multiple curated, authoritative, civilian-facing corpora. Each corpus is a standalone collection of documents on a specific domain, selected for accuracy, public accessibility, and clear structure. Each corpus is assigned a stable `corpus_id` identifier used throughout the system for retrieval scoping.
 
-**MCP Sources (official spec repo — already cloned locally):**
+Each corpus:
+- Is independently ingestible via its own seeding script
+- Carries a stable `corpus_id` assigned at ingestion time
+- Is chunked and embedded into the shared pgvector store, with `corpus_id` on every chunk
+- Is queried in isolation — retrieval is always filtered by the active corpus
+- Is self-contained: conversations, citations, and evidence are drawn from that corpus alone
 
-| Source | Path | Content |
-|---|---|---|
-| Getting Started | `docs/docs/getting-started/intro.mdx` | What MCP is, why it exists |
-| Architecture | `docs/docs/learn/architecture.mdx` | Host/client/server model, transports overview |
-| Server Concepts | `docs/docs/learn/server-concepts.mdx` | Tools, resources, prompts, capabilities |
-| Client Concepts | `docs/docs/learn/client-concepts.mdx` | Client lifecycle, roots, sampling |
-| Build Server | `docs/docs/develop/build-server.mdx` | MCP server implementation with SDK |
-| Build Client | `docs/docs/develop/build-client.mdx` | MCP client implementation with SDK |
-| Connect Local | `docs/docs/develop/connect-local-servers.mdx` | Running MCP servers locally |
-| Connect Remote | `docs/docs/develop/connect-remote-servers.mdx` | Remote MCP, auth, streaming HTTP |
-| Spec — Tools | `docs/specification/2025-11-25/server/tools.mdx` | Tool definition schema |
-| Spec — Resources | `docs/specification/2025-11-25/server/resources.mdx` | Resource definition schema |
-| Spec — Prompts | `docs/specification/2025-11-25/server/prompts.mdx` | Prompt template schema |
-| Spec — Transports | `docs/specification/2025-11-25/basic/transports.mdx` | Stdio vs Streamable HTTP transports |
-| Spec — Authorization | `docs/specification/2025-11-25/basic/authorization.mdx` | OAuth, auth flows |
-| Spec — Lifecycle | `docs/specification/2025-11-25/basic/lifecycle.mdx` | Initialization, capability negotiation |
-| Spec — Schema | `docs/specification/2025-11-25/schema.mdx` | JSON-RPC protocol schema |
-| Blog — MCP Extensions | `blog/content/posts/2026-03-11-understanding-mcp-extensions.md` | Extension mechanism explainer |
-| Blog — Transport Future | `blog/content/posts/2025-12-19-mcp-transport-future.md` | SSE polling, Streamable HTTP evolution |
-| Blog — Tool Annotations | `blog/content/posts/2026-03-16-tool-annotations.md` | Tool annotation spec (readAfterWrite, destructiveHint, etc.) |
-| Blog — Roadmap | `blog/content/posts/2026-03-09-roadmap-update.md` | MCP 2026 roadmap, near-term priorities |
-| Blog — Agentic AI Foundation | `blog/content/posts/2025-12-09-mcp-joins-agentic-ai-foundation.md` | MCP governance and foundation |
-
-**ADK Sources (official docs at adk.dev):**
-
-| Source | URL | Content |
-|---|---|---|
-| About ADK | `adk.dev/get-started/about/` | Core concepts: Agent, Tool, Callbacks, Session, State, Memory, Artifact, Runner, Events |
-| Agents | `adk.dev/agents/` | LlmAgent, workflow agents (Sequential/Parallel/Loop), multi-agent design |
-| Agent Config | `adk.dev/agents/config/` | YAML-based agent definitions without code |
-| Tools | `adk.dev/tools/` | FunctionTool, AgentTool, code execution, MCP Toolset |
-| MCP Tools | `adk.dev/tools-custom/mcp-tools/` | **ADK as MCP client + ADK as MCP server** — critical for the demo |
-| Models | `adk.dev/agents/models/` | Gemini, other LLMs via BaseLlm interface, model routing |
-| Context | `adk.dev/context/` | Context object, session state, artifact management |
-| Memory | `adk.dev/memory/` | Long-term memory across sessions |
-| Skills | `adk.dev/skills/` | Self-contained skill units for agents |
-| Graph Workflows | `adk.dev/graphs/` | ADK 2.0 graph-based orchestration |
-| Tutorial — Agent Team | `adk.dev/tutorials/agent-team/` | Multi-agent team tutorial with real code |
-| API Reference (Python) | `adk.dev/api-reference/python/` | Full Python SDK reference |
-| Integrations | `adk.dev/integrations/` | Ecosystem integrations (data connectors, third-party) |
-
-**Total: ~33 documents.** This is comprehensive enough that a user can ask detailed questions about MCP server design, ADK agent patterns, tool integration, transport selection, or auth flows and get grounded answers.
+Documents within each corpus are pulled as markdown or text, chunked (~500-token chunks, 50-token overlap), embedded, and upserted into pgvector via per-corpus seeding scripts (`scripts/seed_<corpus_id>_knowledge_base.py`).
 
 ### LLM Provider Strategy
 
@@ -250,12 +234,13 @@ ADK's built-in tracing captures each agent's turns, tool calls, token usage, and
 | Module | How | What it covers |
 |---|---|---|
 | `frontend/.../title.ts` | `generateTitle` pure function | Empty string, whitespace, word-boundary truncation, trailing-punctuation trimming, single-word edge cases — 8 tests |
-| `frontend/.../store.ts` | `createConversationStore` | Auto-creation, localStorage CRUD, switch/delete/create, corrupt-data tolerance, last-conversation auto-create — 9 tests |
+| `frontend/.../useChatStore` (store.ts) | `createConversationStore` | Auto-creation, localStorage CRUD, switch/delete/create, corrupt-data tolerance, last-conversation auto-create — 9 tests |
 | `frontend/.../Sidebar.tsx` | `render` + `fireEvent` | Renders list, highlights current, empty state, onNew/onSelect callbacks, trash buttons per row, confirm/cancel hidden on mount — 7 tests |
 | `frontend/.../ChatView.tsx` | `render` + `createSignal` mocks | Message rendering, send/stop buttons, disabled-during-loading, error banner, storage error dismiss, typing indicator logic — 11 tests |
 | `frontend/.../deriveTitle` (useChatStore internals) | Pure-function inline | First-user-message extraction from `UIMessage[]`, multi-part text, no-text-parts, truncation, whitespace fallback — 9 tests |
+| `frontend/.../useChatErrorPropagation` (resilientFetch) | Live `useChat` hook + `fetchServerSentEvents` | Non-ok HTTP response triggers error path via resilientFetch; RUN_ERROR event surfaces to `chat.error`; no silent swallow — 12 tests |
 
-Frontend tests: **46 tests across 5 files**, all passing. Runs in CI.
+Frontend tests: **56 tests across 6 files**, all passing. Runs in CI.
 
 | Module | How | What it covers |
 |---|---|---|
@@ -272,12 +257,27 @@ Frontend tests: **46 tests across 5 files**, all passing. Runs in CI.
 
 `rag/`, `mcp_server/`, and `agents/` don't exist in the codebase yet. Their tests will be added when those modules are implemented, following the same approach: mock at the abstract boundary, pure unit tests, no database dependency for business logic.
 
+The following corpus-scoped tests are planned:
+
+| Module | How | What it covers |
+|---|---|---|
+| `frontend/.../routes.ts` | `render` + route simulation | Landing page renders corpus cards; `/corpora/:corpusId` route sets active corpus from URL param; route change resets conversation list; invalid corpus ID shows error state — 6 tests |
+| `rag/retriever.py` | Mock embedding client + in-memory chunk store | `retrieve(query, corpus_id=A)` returns only chunks from corpus A; omitting corpus_id raises; empty corpus returns empty results — 4 tests |
+| `mcp_server/tools.py` | `FakeRetriever` | `search_knowledge` with corpus_id returns scoped results; `search_knowledge` without corpus_id raises `ValueError`; `fetch_document` with mismatched corpus_id returns empty — 4 tests |
+| `agents/orchestrator.py` | `FakeLLMClient` + mock tools | Corpus ID propagates from orchestrator to each agent's tool calls; cross-corpus leakage returns no results; conversation context includes active corpus identifier — 4 tests |
+| `backend/main.py` | `TestClient` | `GET /api/corpora` returns corpus list with expected shape; corpus ID round-trips through chat endpoint — 2 tests |
+
 ## Out of Scope
 
+- **Blended cross-corpus retrieval.** Retrieval always operates within a single corpus. The architecture does not support queries that span multiple corpora simultaneously.
+- **Corpus switching mid-conversation.** A conversation is bound to the corpus it was started in. To explore a different knowledge base, the user returns to the landing page and starts a new conversation.
+- **In-chat corpus dropdown or selector.** Corpus selection is route-based only.
+- **Cross-corpus conversation switching at the route level.** Conversations from different corpora live in the same localStorage store, but the UI never shows conversations from more than one corpus at once — the route controls which corpus is active, and the conversation list is filtered accordingly.
 - Production user authentication (the demo is open-access; auth can be added later per client requirements). Token abuse prevention is handled via rate-limiting (see Further Notes).
 - Multi-tenancy or per-user RAG indexes
 - Fine-tuning any LLM
 - Pinecone or any non-pgvector vector store
+- Hybrid search or reranking (pure vector similarity is sufficient for the use case)
 - LangChain, LangGraph, or any non-ADK orchestration framework
 - n8n, Make, Zapier, or any automation platform integration
 - Next.js, Vercel, or any SSR framework
@@ -292,7 +292,7 @@ This project has dual value:
 
 1. **Skill building:** Every module teaches a production skill that maps directly to Upwork job requirements — FastAPI, Pydantic, pgvector, MCP, ADK, SSE streaming, Docker deployment.
 
-2. **Proposal leverage:** The live demo URL is the centerpiece of every proposal. The pitch: *"I built exactly this — a multi-agent RAG system where three specialist agents collaborate via MCP, search a pgvector knowledge base, and produce cited answers streamed to a live dashboard. Here's a link. Try asking it anything about MCP server design."*
+2. **Proposal leverage:** The live demo URL is the centerpiece of every proposal. The pitch: *"I built a multi-agent research system with route-based corpus selection — users land on a dashboard, pick a curated knowledge base, and ask questions that three specialist agents answer by searching only that corpus. MCP tools, pgvector retrieval, real-time streaming, fully Dockerized. Here's a link. Pick a corpus and try it."*
 
 ### Token Abuse Prevention
 
@@ -308,4 +308,4 @@ The market-validated posting that this demo directly addresses:
 
 > "Create AI agents (3 to 4) and an MCP server with Tools registered. 3 agents using Google and 1 agent using Crew.AI. Need to prove how these agents can communicate via MCP server. Use a small public dataset and build a search to lookup in local dataset and then send to LLM via API call."
 
-Substitute Google ADK for Crew.AI and the spec is identical.
+Substitute Google ADK for Crew.AI, add multiple curated corpora with route-based selection, and the spec is a direct match.
