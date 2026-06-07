@@ -101,11 +101,13 @@ Provider selection is config-driven: `LLM_PROVIDER=openai` hits `/chat/completio
 
 The client is config-driven: `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, and `LLM_BASE_URL` are set via environment variables. Swapping providers is a config change, not a code change.
 
-**2. Database Layer (`backend/db.py`)**
+**2. Database Layer (`backend/db.py` + `backend/models.py`)**
 
 - `create_db_sessionmaker(database_url)` creates an async SQLAlchemy engine + sessionmaker lazily, rather than at import time
 - `get_db(sessionmaker)` — FastAPI-compatible async generator dependency
 - `init_db(database_url)` — creates the pgvector extension on startup, owning its own engine lifetime
+- `Document` table: `id` (PK), `corpus_id` (TEXT, indexed), `content` (TEXT), `embedding` (VECTOR(768)), `metadata` (JSONB with title, source URL, chunk_index). IVFFlat index on the embedding column.
+- `document_sources` table: `corpus_id`, `filename`, `content_hash` (SHA-256), `updated_at` — used by the seeding script for idempotency diffs (skip unchanged, update changed, delete removed)
 
 **3. FastAPI Backend (`backend/`)**
 
@@ -120,26 +122,57 @@ Standard FastAPI application assembled via the `create_app()` factory with:
 
 The `POST /api/chat` endpoint extracts the `corpus_id` from the incoming request and injects it into the ADK agent's session context, ensuring every tool call carries the active corpus identifier.
 
-**4. RAG Pipeline (`rag/`)**
+**4. Embedding Client (`backend/embeddings/`)**
 
-- Document chunking (recursive text splitter targeting ~500-token chunks with 50-token overlap)
-- Each chunk includes metadata: `corpus_id`, title, source URL, and document reference
-- Embedding via configurable embedding API (OpenAI-compatible client shape)
-- Storage in PostgreSQL with pgvector `VECTOR(1536)` column and a `corpus_id` text column (indexed for fast filtering)
-- Production: managed Supabase instance; development: local `pgvector/pgvector:pg18` Docker container
-- IVFFlat index on the embedding column for fast cosine similarity search
-- Query flow: embed user question → filter by `corpus_id = <active_corpus>` → `SELECT ... WHERE corpus_id = $corpus_id ORDER BY embedding <=> $query LIMIT 5` → return chunks as context
-- Adding a new corpus is an ingestion and configuration task: run the seeding script for the new source documents with its `corpus_id`, register it in the corpus registry, and the frontend picks it up from `GET /api/corpora`
+Mirrors the LLM client pattern: abstract `EmbeddingClient` protocol (`embed_texts`), concrete `OpenRouterEmbeddingClient` (OpenAI-compatible `POST /v1/embeddings` via `HttpTransport`), config-driven factory. Uses Qwen3 Embedding via OpenRouter with MRL set to `dimensions: 768`. Config env vars: `EMBEDDING_MODEL`, `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, `EMBEDDING_DIMENSIONS`.
 
-**5. MCP Server (`mcp_server/`)**
+**5. Chunker Registry (`backend/rag/chunker.py`)**
 
-A Python MCP server using the official `mcp` SDK exposing:
+Per-corpus strategy selection rather than one algorithm for all documents:
+- `MarkdownHeadingChunker` — splits on markdown headings (`#`/`##`/`###`), then recursively to ~500 tokens. Best for technical docs, API references.
+- `ParagraphChunker` — splits on double-newlines, merges small paragraphs up to target size. Best for legal or dense prose.
+- `RecursiveChunker` — character-based fallback splitting by separator priority. Best for unstructured text.
+- `FixedSizeChunker` — mechanical token count with overlap.
+
+Each chunk targets ~500 tokens with 50-token overlap. The strategy is configured per corpus in the YAML registry.
+
+**6. Corpus Registry (`backend/corpora.yaml`)**
+
+A human-editable YAML file committed to the repo and `COPY`'d into the Docker image. Defines available corpora with their identifiers, display metadata, and chunker strategy:
+
+```yaml
+corpora:
+  - id: "a1b2c3d4-..."    # stable UUIDv4
+    slug: "mcp-spec"
+    name: "MCP Specification"
+    description: "Model Context Protocol specification docs"
+    chunker: "markdown-heading"
+    documents: "corpora/mcp-spec/*.md"
+```
+
+Read once on `create_app()` startup. Exposed via `GET /api/corpora`.
+
+**7. RAG Query Layer (`backend/rag/retriever.py`)**
+
+- Embed the user question via the embedding client
+- Cosine similarity search: `SELECT ... WHERE corpus_id = $active_corpus ORDER BY embedding <=> $query LIMIT 5`
+- Return chunks as context for the MCP tools
+- Storage: pgvector `VECTOR(768)` column with IVFFlat index. Production: managed Supabase. Dev: local `pgvector/pgvector:pg18` Docker container.
+- Adding a new corpus is an ingestion and configuration task: add its entry to `corpora.yaml`, place documents in `corpora/<slug>/`, run the seeding script, and the frontend picks it up from `GET /api/corpora`
+
+**8. MCP Server (`backend/mcp_server/`)**
+
+A standalone Python MCP server (official `mcp` SDK, stdio transport) exposing two corpus-scoped tools:
 - `search_knowledge(query: str, corpus_id: str, top_k: int = 5)` — semantic search over the RAG index, scoped to the given corpus
 - `fetch_document(chunk_ids: list[str], corpus_id: str)` — retrieve full document chunks by ID, validated against the active corpus
 
-Both tools accept and enforce a `corpus_id` parameter. The MCP server can run standalone (for testing with MCP Inspector or Claude Desktop) or embedded in the FastAPI process.
+Both tools accept and enforce a `corpus_id` parameter. Missing or unknown `corpus_id` returns an error. The server wraps the RAG query interface directly (no HTTP).
 
-**6. Google ADK Agent System (`agents/`)**
+**Embedded mode:** `create_app()` spawns the MCP server as a subprocess on startup. The ADK agent connects via `MCPToolset` with stdio transport. The server process is killed on FastAPI shutdown.
+
+**Standalone mode:** `uv run python -m backend.mcp_server` for MCP Inspector or Claude Desktop.
+
+**9. Google ADK Agent System (`backend/agents/`)**
 
 Three specialist agents, each defined as an ADK `LlmAgent` and each operating within the active corpus:
 
@@ -147,15 +180,17 @@ Three specialist agents, each defined as an ADK `LlmAgent` and each operating wi
 - **Corpus Critic:** "You review the Researcher's findings against the active corpus. Identify gaps, contradictions, weak citations, or missing context. Use `search_knowledge` for follow-up queries (always with the corpus ID) and `fetch_document` to read full chunks. Produce a critique with specific requests for clarification."
 - **Corpus Synthesizer:** "You produce the final answer. Synthesize the Researcher's findings and the Critic's review into a concise, cited answer grounded in the active corpus. Structure: summary, key findings with citations, confidence assessment."
 
-An ADK `SequentialAgent` orchestrates the flow: Researcher → Critic → Synthesizer. Each agent receives the previous agent's output and the active corpus ID in its context. The corpus ID is injected at the orchestration layer, not hardcoded in individual agents.
+An ADK `SequentialAgent` orchestrates the flow: Researcher → Critic → Synthesizer. Each agent receives the previous agent's output and the active corpus ID in its context. The corpus ID is injected via ADK session state at the orchestration layer (stored on conversation init, read by each agent when making tool calls), not hardcoded in individual agents.
+
+The MCP server tools are wired to the agents via ADK `MCPToolset` with stdio transport to the embedded subprocess.
 
 Agent thinking and intermediate results are streamed via ADK's built-in event system, which the AG-UI middleware converts to SSE events (`RUN_STARTED` → `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT`* → `TEXT_MESSAGE_END` → `RUN_FINISHED`).
 
-**7. SolidJS Frontend (`frontend/`)**
+**10. SolidJS Frontend (`frontend/`)**
 
-A Vite + SolidJS SPA with route-based corpus selection:
+A Vite + SolidJS SPA with route-based corpus selection using `@solidjs/router`:
 
-- **Landing page** (`/`): Introduces the product. Displays available knowledge bases as navigable cards showing the display name and description. Clicking a card navigates to `/corpora/<slug>`. The list is fetched from `GET /api/corpora` on load and can be updated by adding new corpus entries to the backend configuration.
+- **Landing page** (`/`): Introduces the product. Displays available knowledge bases as navigable cards showing the display name and description. Clicking a card navigates to `/corpora/<slug>`. The list is fetched once from `GET /api/corpora` at the app root and cached globally via SolidJS context (no re-fetch on route changes). Updated by adding new corpus entries to the backend's `corpora.yaml`.
 - **Corpus route** (`/corpora/:slug`): Dedicated chat interface for the selected knowledge base. On mount, the frontend looks up the slug against the corpus list. If found, the corpus name is displayed prominently in the header and the UUID is used as `corpusId` in chat requests and conversation records. If the slug does not match any configured corpus, the route renders in-place with a friendly message explaining the corpus doesn't exist or its address has changed, alongside a button labeled "Browse available knowledge bases" that navigates to the landing page.
 - **No in-chat corpus dropdown.** The active corpus is set by the route and cannot be changed mid-conversation.
 - Chat input area (auto-growing textarea + submit and stop buttons)
@@ -172,10 +207,16 @@ A Vite + SolidJS SPA with route-based corpus selection:
 
 Connects to `POST /api/chat` via `@tanstack/ai-solid`'s `useChat` hook with `fetchServerSentEvents` adapter (AG-UI protocol over SSE). The `corpusId` is sent as part of the chat request from the route-level context.
 
-**8. Deployment**
+**11. Seeding Script (`scripts/seed_knowledge_base.py`)**
+
+A standalone CLI script that populates the vector database from source documents. Idempotent: computes SHA-256 of each file, compares against the `document_sources` table, and applies a diff (insert new, update changed, delete removed, skip unchanged). Usage: `uv run scripts/seed_knowledge_base.py --corpus <slug>` or `--all` for every configured corpus.
+
+Run once per corpus on first deploy. On subsequent deploys, the hash-based diff makes it instant unless source files changed. Run in production as a Coolify post-deployment command inside the backend container.
+
+**12. Deployment**
 
 Two separate Docker images, each self-contained:
-- **`multi-agent-rag-be`** (`backend/Dockerfile`): FastAPI + ADK + MCP + RAG on `python:3.13-slim`
+- **`multi-agent-rag-be`** (`backend/Dockerfile`): FastAPI + ADK + MCP + RAG on `python:3.13-slim`. Also `COPY`s `corpora/` and `scripts/` into the image so the seeding script has access to source documents.
 - **`multi-agent-rag-fe`** (`frontend/Dockerfile`): multi-stage — Bun builds the SolidJS SPA, then Caddy serves it with `/api/*` reverse-proxied to the backend
 
 Deployed via a two-service docker-compose on Coolify:
@@ -206,13 +247,15 @@ Each corpus has three identifiers:
 - A **`name`** — a human-readable display label shown on landing page cards, headers, and conversation context. Mutable independently of the slug.
 
 Each corpus:
-- Is independently ingestible via its own seeding script
+- Is independently ingestible via a single generalized seeding script
 - Carries a stable `corpus_id` (UUIDv4) assigned at ingestion time
-- Is chunked and embedded into the shared pgvector store, with `corpus_id` on every chunk
+- Is chunked according to its configured strategy (`markdown-heading`, `paragraph`, or `recursive`)
+- Is embedded via Qwen3 Embedding (768-dim, MRL) through OpenRouter
+- Is stored in the shared pgvector store with `corpus_id` on every chunk
 - Is queried in isolation — retrieval is always filtered by the active `corpus_id`
 - Is self-contained: conversations, citations, and evidence are drawn from that corpus alone
 
-Documents within each corpus are pulled as markdown or text, chunked (~500-token chunks, 50-token overlap), embedded, and upserted into pgvector via per-corpus seeding scripts (`scripts/seed_<corpus_id>_knowledge_base.py`).
+Documents within each corpus are pulled as markdown or text, chunked (~500-token chunks, 50-token overlap), embedded, and upserted into pgvector via a single seeding script (`scripts/seed_knowledge_base.py --corpus <slug>`).
 
 **Stale slug handling:** When a user navigates to a route whose slug does not match any configured corpus, the frontend does not force-redirect. Instead it renders the corpus route inline with an explanatory message — "This knowledge base doesn't exist or its address has changed" — and a button labeled "Browse available knowledge bases" that navigates to the landing page. This makes bookmark breakage a gentle, self-explanatory dead end rather than a confusing redirect.
 
@@ -222,7 +265,11 @@ The `LLMClient` abstraction (`backend/llm/`) supports both OpenAI and Anthropic 
 
 The abstract interface encodes the *contract* (messages in → text+usage out), not a specific provider's SDK. `generate_stream` yields `(text_delta, usage)` tuples — usage is communicated through the return channel rather than through mutable instance state (`last_usage`), keeping the abstract seam pure.
 
-Embedding follows the same pattern: a configurable embedding client will be added alongside the RAG pipeline.
+### Embedding Provider Strategy
+
+The `EmbeddingClient` abstraction (`backend/embeddings/`) mirrors the LLM pattern: an abstract protocol (`embed_texts`), a concrete implementation (`OpenRouterEmbeddingClient` via OpenAI-compatible `POST /v1/embeddings`), and a config-driven factory. Uses Qwen3 Embedding at 768 dimensions (MRL) through OpenRouter. The `HttpTransport` seam from the LLM layer is reused for HTTP.
+
+Config env vars: `EMBEDDING_MODEL`, `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, `EMBEDDING_DIMENSIONS`. Swapping embedding providers is a config change, not a code change — same principle as the LLM layer.
 
 ### Observability
 
@@ -263,17 +310,19 @@ Frontend tests: **56 tests across 6 files**, all passing. Runs in CI.
 
 ### Modules not yet tested
 
-`rag/`, `mcp_server/`, and `agents/` don't exist in the codebase yet. Their tests will be added when those modules are implemented, following the same approach: mock at the abstract boundary, pure unit tests, no database dependency for business logic.
-
-The following corpus-scoped tests are planned:
+The following modules are planned but not yet in the codebase. Tests will follow the existing pattern: mock at the abstract boundary, pure unit tests, no database dependency for business logic.
 
 | Module | How | What it covers |
 |---|---|---|
-| `frontend/.../routes.ts` | `render` + route simulation | Landing page renders corpus cards; `/corpora/:slug` resolves slug to corpus UUID; unknown slug redirects to landing page with message; route change filters conversation list by corpus — 7 tests |
-| `rag/retriever.py` | Mock embedding client + in-memory chunk store | `retrieve(query, corpus_id=A)` returns only chunks from corpus A; omitting corpus_id raises; empty corpus returns empty results — 4 tests |
-| `mcp_server/tools.py` | `FakeRetriever` | `search_knowledge` with corpus_id returns scoped results; `search_knowledge` without corpus_id raises `ValueError`; `fetch_document` with mismatched corpus_id returns empty — 4 tests |
-| `agents/orchestrator.py` | `FakeLLMClient` + mock tools | Corpus ID propagates from orchestrator to each agent's tool calls; cross-corpus leakage returns no results; conversation context includes active corpus identifier — 4 tests |
-| `backend/main.py` | `TestClient` | `GET /api/corpora` returns corpus list with expected shape; corpus ID round-trips through chat endpoint — 2 tests |
+| `frontend/.../LandingPage.tsx` | `render` + route simulation | Landing page renders corpus cards; `/corpora/:slug` resolves slug to corpus UUID; unknown slug shows friendly message + browse button; route change filters conversation list by corpus — 7 tests |
+| `backend/embeddings/openai.py` | `FakeTransport` | Request body shape, response parsing, `dimensions` param, 4xx→`EmbeddingError` |
+| `backend/embeddings/factory.py` | Fixture-based env override | Returns `OpenRouterEmbeddingClient` by config; `ValueError` on unknown |
+| `backend/rag/chunker.py` | Pure function | `MarkdownHeadingChunker` preserves heading boundaries; `ParagraphChunker` merges small paras; `RecursiveChunker` respects separator priority; mid-word splits prevented — 8 tests |
+| `backend/rag/retriever.py` | Mock embedding client + in-memory chunk store | `retrieve(query, corpus_id=A)` returns only chunks from corpus A; omitting corpus_id raises; empty corpus returns empty results — 4 tests |
+| `scripts/seed_knowledge_base.py` | Fake file system + fake DB | New files inserted; unchanged skipped; deleted removed; changed re-processed — 6 tests |
+| `backend/mcp_server/tools.py` | `FakeRetriever` | `search_knowledge` with corpus_id returns scoped results; missing corpus_id raises; cross-corpus fetch returns empty — 4 tests |
+| `backend/agents/orchestrator.py` | `FakeLLMClient` + fake MCP toolset | Corpus ID propagates to each agent's tool calls; cross-corpus leakage returns no results — 4 tests |
+| `backend/main.py` | `TestClient` | `GET /api/corpora` from YAML; corpus ID round-trip through chat — 2 tests |
 
 ## Out of Scope
 
