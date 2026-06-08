@@ -11,6 +11,7 @@ dependencies = [
     "pgvector>=0.4.2",
     "pyyaml>=6.0",
     "sqlalchemy>=2.0.50",
+    "mcp>=1.0.0",
 ]
 
 [project.optional-dependencies]

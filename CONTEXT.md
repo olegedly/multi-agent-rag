@@ -13,7 +13,7 @@ The URL segment used in `/corpora/<slug>` routes. Human-readable, mutable. Renam
 _Avoid_: Route, path, identifier
 
 **MCP Server**:
-A standalone stdio-process exposing two corpus-scoped tools (`search_knowledge`, `fetch_document`). Runs independently of the FastAPI app. Agents connect via ADK `MCPToolset`.
+A standalone stdio-process exposing two corpus-scoped tools (`search_corpus`, `read_document`). Runs independently of the FastAPI app. Agents connect via ADK `MCPToolset`.
 _Avoid_: Tool server, plugin, skill server
 
 **RAG Search**:
