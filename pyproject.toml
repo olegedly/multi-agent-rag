@@ -36,7 +36,8 @@ filterwarnings = [
 markers = ["httpx_mock: marks tests that use pytest-httpx (deselect with '-m \"not httpx_mock\"')"]
 
 [tool.pyright]
-venvPath = ".venv"
+venvPath = "."
+venv = ".venv"
 exclude = [
     "**/.git/**",
     "**/__pycache__/**",
@@ -44,6 +45,9 @@ exclude = [
     "**/node_modules/**",
 ]
 typeCheckingMode = "standard"
+reportUnusedImport = "error"
+reportUnusedVariable = "error"
+reportDuplicateImport = "error"
 
 [tool.fastapi]
 entrypoint = "backend.main:app"

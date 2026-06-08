@@ -149,7 +149,7 @@ async def seed_corpus(
 
     # ── Process (insert + update) ─────────────────────────────────────
     to_process = plan["insert"] + plan["update"]
-    for key, fname, content in to_process:
+    for key, _fname, content in to_process:
         chunks = chunker.chunk(content, {"title": key, "source_url": ""})
         texts = [c.content for c in chunks]
         embeddings = await embedding_client.embed_texts(texts)

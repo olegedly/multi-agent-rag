@@ -132,3 +132,62 @@ class TestChatEndpoint:
         assert response.headers["content-type"].startswith("text/event-stream")
         assert "RUN_STARTED" in response.text
         assert "RUN_FINISHED" in response.text
+
+    def test_with_corpus_id_in_state(self, client: TestClient) -> None:
+        """corpusId in state does not break the chat stream."""
+        from ag_ui.core.types import UserMessage
+
+        msg = UserMessage(id="msg-1", content="hello")
+        response = client.post(
+            "/api/chat",
+            json={
+                "thread_id": "test-thread",
+                "run_id": "test-run",
+                "state": {"corpusId": "a1b2c3d4-1234-5678-9abc-def012345678"},
+                "messages": [msg.model_dump(mode="json")],
+                "tools": [],
+                "context": [],
+                "forwarded_props": {},
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert "RUN_STARTED" in response.text
+        assert "RUN_FINISHED" in response.text
+
+
+# ── Agent configuration ──────────────────────────────────────────────────────
+
+
+class TestAgentTools:
+    """The agent is wired with RAG tools via FunctionTool."""
+
+    def test_agent_has_rag_tools(self) -> None:
+        """The FunctionTools hide tool_context and expose only
+        LLM-controllable parameters."""
+        from google.adk.tools.function_tool import FunctionTool
+        from backend.agents.tools import make_rag_tools
+
+        rag_search, rag_read_document = make_rag_tools(
+            sessionmaker=None, embedding_client=None
+        )
+        ft1 = FunctionTool(rag_search)
+        ft2 = FunctionTool(rag_read_document)
+        assert ft1.name == "rag_search"
+        assert ft2.name == "rag_read_document"
+
+        # Both tools hide ``tool_context`` from the LLM declaration
+        decl1 = ft1._get_declaration()
+        assert decl1 is not None
+        schema1 = decl1.parameters_json_schema or {}
+        props1 = schema1.get("properties", {})
+        assert "query" in props1
+        assert "top_k" in props1
+        assert "tool_context" not in props1
+
+        decl2 = ft2._get_declaration()
+        assert decl2 is not None
+        schema2 = decl2.parameters_json_schema or {}
+        props2 = schema2.get("properties", {})
+        assert "chunk_ids" in props2
+        assert "tool_context" not in props2

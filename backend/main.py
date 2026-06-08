@@ -11,7 +11,9 @@ from contextlib import asynccontextmanager
 from ag_ui_adk import ADKAgent, add_adk_fastapi_endpoint
 from fastapi import FastAPI
 from google.adk.agents import Agent
+from google.adk.tools.function_tool import FunctionTool
 
+from backend.agents.tools import make_rag_tools
 from backend.config import Settings, get_settings
 from backend.corpus_config import CorporaConfig
 from backend.llm.adk_adapter import AdkLlmAdapter
@@ -103,13 +105,23 @@ def create_app(
 
     llm_model = AdkLlmAdapter(llm_client)
 
+    rag_search, rag_read_document = make_rag_tools()
+
     root_agent = Agent(
         name="rag_assistant",
         model=llm_model,
         instruction=(
-            "You are a helpful research assistant. "
-            "Answer questions clearly and concisely."
+            "You are a research assistant with access to a curated knowledge base. "
+            "Use the `rag_search` tool to find relevant chunks in the active "
+            "corpus.  Use `rag_read_document` to retrieve full document context "
+            "around promising chunks.  Always cite your sources (corpus name + "
+            "content excerpts).  If a search returns no results, say so — do "
+            "not invent facts."
         ),
+        tools=[
+            FunctionTool(rag_search),
+            FunctionTool(rag_read_document),
+        ],
     )
 
     adk_agent = ADKAgent(

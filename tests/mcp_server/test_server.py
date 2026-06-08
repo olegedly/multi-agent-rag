@@ -33,7 +33,7 @@ class TestSearchCorpusTool:
 
     async def test_returns_scoped_results(self, server):
         """Results are returned for the requested corpus."""
-        mod, client, sm = server
+        mod, _client, sm = server
         sm.chunks = [
             FakeRow(id=1, corpus_id="corpus_a", content="Hello world",
                     source_filename="doc.md"),
@@ -57,7 +57,7 @@ class TestSearchCorpusTool:
 
     async def test_missing_corpus_returns_empty_results(self, server):
         """Unknown corpus_id yields empty results (no error)."""
-        mod, client, sm = server
+        mod, _client, sm = server
         sm.chunks = [
             FakeRow(id=1, corpus_id="corpus_a", content="Hello",
                     source_filename="doc.md"),
@@ -76,7 +76,7 @@ class TestSearchCorpusTool:
 
     async def test_nonexistent_tool_returns_proper_error(self, server):
         """Calling an unknown tool should raise or return error."""
-        mod, client, sm = server
+        mod, _client, _sm = server
         with pytest.raises(ToolError, match="Unknown tool"):
             await mod.call_tool("nonexistent_tool", {})
 
@@ -89,7 +89,7 @@ class TestReadDocumentTool:
 
     async def test_returns_source_level_chunks(self, server):
         """All chunks from the same source file are returned."""
-        mod, client, sm = server
+        mod, _client, sm = server
         sm.chunks = [
             FakeRow(id=1, corpus_id="corpus_a", content="Doc chunk 1",
                     source_filename="doc1.md"),
@@ -113,7 +113,7 @@ class TestReadDocumentTool:
 
     async def test_cross_corpus_returns_empty(self, server):
         """Chunks from another corpus are not returned."""
-        mod, client, sm = server
+        mod, _client, sm = server
         sm.chunks = [
             FakeRow(id=1, corpus_id="corpus_a", content="A chunk",
                     source_filename="a.md"),

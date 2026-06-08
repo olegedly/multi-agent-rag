@@ -263,7 +263,7 @@ class TestParseSseEvent:
 
     def test_parses_message_start(self) -> None:
         event = 'data: {"type":"message_start","message":{"content":[{"type":"text","text":"init"}]}}'
-        deltas, usage = AnthropicClient._parse_sse_event(event)
+        deltas, _usage = AnthropicClient._parse_sse_event(event)
         assert deltas == ["init"]
 
     def test_parses_usage_from_message_delta(self) -> None:

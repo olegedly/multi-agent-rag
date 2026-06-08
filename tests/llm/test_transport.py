@@ -7,7 +7,6 @@ and never hit the wire.
 
 import json
 
-import httpx
 import pytest
 
 from backend.llm.protocol import LLMError

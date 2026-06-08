@@ -116,7 +116,7 @@ class TestGenerate:
         await client.generate(messages=[Message(role="user", content="hi")])
 
         assert len(transport.sent_requests) == 1
-        url, headers, body = transport.sent_requests[0]
+        url, headers, _body = transport.sent_requests[0]
         assert url == "https://api.test.com/v1/chat/completions"
         assert headers["authorization"] == "Bearer sk-test"
         assert headers["content-type"] == "application/json"
@@ -240,5 +240,5 @@ class TestParseSseEvent:
     def test_extracts_data_line(self) -> None:
         """Ignores event: lines and only reads data: lines."""
         event_block = 'event: foo\ndata: {"choices":[{"delta":{"content":"ok"}}]}'
-        deltas, usage = OpenAIClient._parse_sse_event(event_block)
+        deltas, _usage = OpenAIClient._parse_sse_event(event_block)
         assert deltas == ["ok"]
