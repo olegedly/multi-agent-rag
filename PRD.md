@@ -69,7 +69,7 @@ SolidJS SPA ──AG-UI/SSE──▶ FastAPI ──▶ Google ADK Orchestrator
    fetchServerSentEvents)   factory)        ├── Critic (corpus-scoped)
                                               └── Synthesizer (corpus-scoped)
                               │
-                              ├── MCP Server (search_knowledge, fetch_document)
+                              ├── MCP Server (search_corpus, read_document)
                               │         └── pgvector RAG (corpus-filtered)
                               │               └── PostgreSQL ── chunks with corpus_id
                               │
@@ -142,31 +142,32 @@ A human-editable YAML file committed to the repo and `COPY`'d into the Docker im
 
 ```yaml
 corpora:
-  - id: "a1b2c3d4-..."    # stable UUIDv4
-    slug: "mcp-spec"
-    name: "MCP Specification"
-    description: "Model Context Protocol specification docs"
+  - id: "315e41aa-8657-46c0-ac4b-ea4355babf0a"    # stable UUIDv4
+    slug: "eu-ai-act"
+    name: "EU AI Act"
+    description: "European Union Artificial Intelligence Act — full regulation text"
     chunker: "markdown-heading"
-    documents: "corpora/mcp-spec/*.md"
+    documents: "corpora/eu-ai-act/**/*.md"
 ```
 
 Read once on `create_app()` startup. Exposed via `GET /api/corpora`.
 
-**7. RAG Query Layer (`backend/rag/retriever.py`)**
+**7. RAG Query Layer (`backend/rag/search.py`)**
 
 - Embed the user question via the embedding client
-- Cosine similarity search: `SELECT ... WHERE corpus_id = $active_corpus ORDER BY embedding <=> $query LIMIT 5`
-- Return chunks as context for the MCP tools
+- Cosine similarity search: `SELECT 1 - (embedding <=> :query_vec) AS score WHERE corpus_id = :corpus_id ORDER BY embedding <=> :query_vec LIMIT :top_k`
+- Returns typed `SearchResult` objects (id, corpus_id, content, metadata, score) where score = `1 - cosine_distance`, range [0,1], higher = better
+- Companion `read_document(chunk_ids, corpus_id)` returns all chunks from the same source file(s) (source-level fetch), enabling the Critic agent to verify citations with full context
 - Storage: pgvector `VECTOR(768)` column with IVFFlat index. Production: managed Supabase. Dev: local `pgvector/pgvector:pg18` Docker container.
 - Adding a new corpus is an ingestion and configuration task: add its entry to `corpora.yaml`, place documents in `corpora/<slug>/`, run the seeding script, and the frontend picks it up from `GET /api/corpora`
 
 **8. MCP Server (`backend/mcp_server/`)**
 
 A standalone Python MCP server (official `mcp` SDK, stdio transport) exposing two corpus-scoped tools:
-- `search_knowledge(query: str, corpus_id: str, top_k: int = 5)` — semantic search over the RAG index, scoped to the given corpus
-- `fetch_document(chunk_ids: list[str], corpus_id: str)` — retrieve full document chunks by ID, validated against the active corpus
+- `search_corpus(query: str, corpus_id: str, top_k: int = 5)` — semantic search over the RAG index, scoped to the given corpus. Returns chunks with cosine similarity scores (1 - distance, range [0,1]).
+- `read_document(chunk_ids: list[int], corpus_id: str)` — source-level document retrieval. Given chunk IDs from a search result, returns all chunks from the same source file(s) for full-context citation verification.
 
-Both tools accept and enforce a `corpus_id` parameter. Missing or unknown `corpus_id` returns an error. The server wraps the RAG query interface directly (no HTTP).
+Both tools accept and enforce a `corpus_id` parameter. Missing or unknown `corpus_id` returns a structured error (not an exception). Errors are returned as dicts, not raised — the agent always gets a parseable response. The server wraps the RAG query interface directly (no HTTP).
 
 **Embedded mode:** `create_app()` spawns the MCP server as a subprocess on startup. The ADK agent connects via `MCPToolset` with stdio transport. The server process is killed on FastAPI shutdown.
 
@@ -176,8 +177,8 @@ Both tools accept and enforce a `corpus_id` parameter. Missing or unknown `corpu
 
 Three specialist agents, each defined as an ADK `LlmAgent` and each operating within the active corpus:
 
-- **Corpus Researcher:** "You search the active knowledge base for facts, dates, definitions, and specifications relevant to the user's question. Use the `search_knowledge` tool with the provided corpus ID. Report your findings with exact citations."
-- **Corpus Critic:** "You review the Researcher's findings against the active corpus. Identify gaps, contradictions, weak citations, or missing context. Use `search_knowledge` for follow-up queries (always with the corpus ID) and `fetch_document` to read full chunks. Produce a critique with specific requests for clarification."
+- **Corpus Researcher:** "You search the active knowledge base for facts, dates, definitions, and specifications relevant to the user's question. Use the `search_corpus` tool with the provided corpus ID. Report your findings with exact citations."
+- **Corpus Critic:** "You review the Researcher's findings against the active corpus. Identify gaps, contradictions, weak citations, or missing context. Use `search_corpus` for follow-up queries (always with the corpus ID) and `read_document` to read full source context around promising chunks. Produce a critique with specific requests for clarification."
 - **Corpus Synthesizer:** "You produce the final answer. Synthesize the Researcher's findings and the Critic's review into a concise, cited answer grounded in the active corpus. Structure: summary, key findings with citations, confidence assessment."
 
 An ADK `SequentialAgent` orchestrates the flow: Researcher → Critic → Synthesizer. Each agent receives the previous agent's output and the active corpus ID in its context. The corpus ID is injected via ADK session state at the orchestration layer (stored on conversation init, read by each agent when making tool calls), not hardcoded in individual agents.
@@ -318,9 +319,9 @@ The following modules are planned but not yet in the codebase. Tests will follow
 | `backend/embeddings/openai.py` | `FakeTransport` | Request body shape, response parsing, `dimensions` param, 4xx→`EmbeddingError` |
 | `backend/embeddings/factory.py` | Fixture-based env override | Returns `OpenRouterEmbeddingClient` by config; `ValueError` on unknown |
 | `backend/rag/chunker.py` | Pure function | `MarkdownHeadingChunker` preserves heading boundaries; `ParagraphChunker` merges small paras; `RecursiveChunker` respects separator priority; mid-word splits prevented — 8 tests |
-| `backend/rag/retriever.py` | Mock embedding client + in-memory chunk store | `retrieve(query, corpus_id=A)` returns only chunks from corpus A; omitting corpus_id raises; empty corpus returns empty results — 4 tests |
+| `backend/rag/search.py` | Mock embedding client + in-memory chunk store | `search_corpus` returns only chunks from correct corpus; `read_document` returns source-level context; scores are cosine similarity [0,1]; missing corpus_id raises — 5 tests |
 | `scripts/seed_knowledge_base.py` | Fake file system + fake DB | New files inserted; unchanged skipped; deleted removed; changed re-processed — 6 tests |
-| `backend/mcp_server/tools.py` | `FakeRetriever` | `search_knowledge` with corpus_id returns scoped results; missing corpus_id raises; cross-corpus fetch returns empty — 4 tests |
+| `backend/mcp_server/server.py` | `FakeSearch` | `search_corpus` with corpus_id returns scoped results; missing corpus_id returns error; `read_document` returns source-level chunks — 4 tests |
 | `backend/agents/orchestrator.py` | `FakeLLMClient` + fake MCP toolset | Corpus ID propagates to each agent's tool calls; cross-corpus leakage returns no results — 4 tests |
 | `backend/main.py` | `TestClient` | `GET /api/corpora` from YAML; corpus ID round-trip through chat — 2 tests |
 

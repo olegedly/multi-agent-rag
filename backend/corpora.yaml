@@ -1,7 +1,7 @@
 corpora:
-  - id: "a1b2c3d4-e5f6-7890-abcd-ef0123456789"
-    slug: "mcp-spec"
-    name: "MCP Specification"
-    description: "Model Context Protocol specification and ADK documentation"
+  - id: "315e41aa-8657-46c0-ac4b-ea4355babf0a"
+    slug: "eu-ai-act"
+    name: "EU AI Act"
+    description: "European Union Artificial Intelligence Act — full regulation text"
     chunker: "markdown-heading"
-    documents: "corpora/mcp-spec/*.md"
+    documents: "corpora/eu-ai-act/**/*.md"
