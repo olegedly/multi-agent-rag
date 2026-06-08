@@ -10,7 +10,7 @@ from typing import AsyncIterable
 
 import httpx
 
-from backend.llm.protocol import LLMClient, LLMResponse, Message, Usage
+from backend.llm.protocol import LLMClient, LLMResponse, Message, StreamEvent, ToolDef, Usage
 from backend.llm.transport import Transport
 
 
@@ -73,9 +73,8 @@ class FakeTransport(Transport):
 class FakeLLMClient(LLMClient):
     """A fake LLM client with deterministic responses.
 
-    Cycles through ``responses`` in order.  For streaming, yields one
-    character at a time so callers can observe intermediate deltas.
-    The final yield carries the accumulated usage.
+    Cycles through ``responses`` in order.  For streaming, yields text
+    deltas then a final event with usage.
     """
 
     def __init__(self, responses: list[str] | None = None):
@@ -92,6 +91,7 @@ class FakeLLMClient(LLMClient):
         self,
         messages: list[Message],
         system: str | None = None,
+        tools: list[ToolDef] | None = None,
         **kwargs,
     ) -> LLMResponse:
         text = self._next_response()
@@ -102,15 +102,15 @@ class FakeLLMClient(LLMClient):
         self,
         messages: list[Message],
         system: str | None = None,
+        tools: list[ToolDef] | None = None,
         **kwargs,
-    ) -> AsyncIterable[tuple[str, Usage | None]]:
+    ) -> AsyncIterable[StreamEvent]:
         text = self._next_response()
         chars = list(text)
-        for i, char in enumerate(chars):
-            usage = None
-            if i == len(chars) - 1:
-                usage = Usage(input_tokens=10, output_tokens=len(text))
-            yield char, usage
+        for char in chars:
+            yield StreamEvent(content=char)
+        usage = Usage(input_tokens=10, output_tokens=len(text))
+        yield StreamEvent(usage=usage)
 
 
 class CollectingLLMClient(LLMClient):
@@ -118,16 +118,17 @@ class CollectingLLMClient(LLMClient):
 
     def __init__(self, response: str = "collected"):
         self.model = "collector"
-        self.calls: list[tuple[list[Message], str | None]] = []
+        self.calls: list[tuple[list[Message], str | None, list[ToolDef] | None]] = []
         self._response = response
 
     async def generate(
         self,
         messages: list[Message],
         system: str | None = None,
+        tools: list[ToolDef] | None = None,
         **kwargs,
     ) -> LLMResponse:
-        self.calls.append((messages, system))
+        self.calls.append((messages, system, tools))
         usage = Usage(input_tokens=5, output_tokens=len(self._response))
         return LLMResponse(content=self._response, usage=usage)
 
@@ -135,12 +136,14 @@ class CollectingLLMClient(LLMClient):
         self,
         messages: list[Message],
         system: str | None = None,
+        tools: list[ToolDef] | None = None,
         **kwargs,
-    ) -> AsyncIterable[tuple[str, Usage | None]]:
-        self.calls.append((messages, system))
+    ) -> AsyncIterable[StreamEvent]:
+        self.calls.append((messages, system, tools))
         usage = Usage(input_tokens=5, output_tokens=len(self._response))
         for char in self._response:
-            yield char, usage
+            yield StreamEvent(content=char)
+        yield StreamEvent(usage=usage)
 
 
 # ── Embedding Client Fake ────────────────────────────────────────────────────

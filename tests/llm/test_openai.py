@@ -34,6 +34,7 @@ class TestRequestBody:
         body = client._build_body(
             messages=[Message(role="user", content="hi")],
             system="be concise",
+            tools=None,
             stream=False,
         )
         assert body["model"] == "test-model"
@@ -46,6 +47,7 @@ class TestRequestBody:
         body = client._build_body(
             messages=[Message(role="user", content="hi")],
             system=None,
+            tools=None,
             stream=True,
         )
         assert body["stream"] is True
@@ -56,10 +58,29 @@ class TestRequestBody:
         body = client._build_body(
             messages=[Message(role="system", content="dup"), Message(role="user", content="hi")],
             system="real system",
+            tools=None,
             stream=False,
         )
         roles = [m["role"] for m in body["messages"]]
         assert roles == ["system", "user"]  # system from kwarg, user from messages
+
+    def test_includes_tools(self, client: OpenAIClient) -> None:
+        """Tool definitions are serialised into the request body."""
+        from backend.llm.protocol import ToolDef
+        body = client._build_body(
+            messages=[Message(role="user", content="hi")],
+            system=None,
+            tools=[
+                ToolDef(name="search", description="Search the corpus", parameters={
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                }),
+            ],
+            stream=False,
+        )
+        assert "tools" in body
+        assert len(body["tools"]) == 1
+        assert body["tools"][0]["function"]["name"] == "search"
 
 
 # ── Non-streaming generate ───────────────────────────────────────────────────
@@ -144,14 +165,14 @@ class TestGenerateStream:
             transport=transport,
         )
 
-        deltas = []
-        async for chunk, _ in client.generate_stream(
+        texts = []
+        async for event in client.generate_stream(
             messages=[Message(role="user", content="hi")]
         ):
-            deltas.append(chunk)
+            if event.content:
+                texts.append(event.content)
 
-        # The usage-only event yields ("", usage), adding an empty string
-        assert deltas == ["Hello", " world", ""]
+        assert texts == ["Hello", " world"]
 
     async def test_records_usage_from_final_event(self) -> None:
         transport = FakeTransport.with_stream(["\n".join(self.SSE_EVENTS)])
@@ -161,11 +182,11 @@ class TestGenerateStream:
         )
 
         last_usage = None
-        async for _, usage in client.generate_stream(
+        async for event in client.generate_stream(
             messages=[Message(role="user", content="hi")]
         ):
-            if usage is not None:
-                last_usage = usage
+            if event.usage is not None:
+                last_usage = event.usage
 
         assert last_usage is not None
         assert last_usage.input_tokens == 3
@@ -182,7 +203,7 @@ class TestGenerateStream:
         )
 
         with pytest.raises(LLMError) as excinfo:
-            async for _, _ in client.generate_stream(
+            async for _ in client.generate_stream(
                 messages=[Message(role="user", content="hi")]
             ):
                 pass
@@ -195,13 +216,13 @@ class TestGenerateStream:
             transport=transport,
         )
 
-        deltas = []
-        async for chunk, _ in client.generate_stream(
+        events = []
+        async for event in client.generate_stream(
             messages=[Message(role="user", content="hi")]
         ):
-            deltas.append(chunk)
+            events.append(event)
 
-        assert deltas == []
+        assert events == []
 
 
 # ── SSE parser (static) ──────────────────────────────────────────────────────
@@ -210,35 +231,35 @@ class TestGenerateStream:
 class TestParseSseEvent:
     def test_parses_content_delta(self) -> None:
         event = 'data: {"choices":[{"delta":{"content":"hi"},"index":0}]}'
-        deltas, usage = OpenAIClient._parse_sse_event(event)
-        assert deltas == ["hi"]
-        assert usage is None
+        result = OpenAIClient._parse_sse_event(event)
+        assert result is not None
+        assert result.content == "hi"
+        assert result.usage is None
 
     def test_parses_usage(self) -> None:
         event = 'data: {"choices":[{"delta":{}}],"usage":{"prompt_tokens":1,"completion_tokens":2}}'
-        deltas, usage = OpenAIClient._parse_sse_event(event)
-        assert deltas == []
-        assert usage is not None
-        assert usage.input_tokens == 1
-        assert usage.output_tokens == 2
+        result = OpenAIClient._parse_sse_event(event)
+        assert result is not None
+        assert result.content == ""
+        assert result.usage is not None
+        assert result.usage.input_tokens == 1
+        assert result.usage.output_tokens == 2
 
     def test_handles_done_signal(self) -> None:
-        deltas, usage = OpenAIClient._parse_sse_event("data: [DONE]")
-        assert deltas == []
-        assert usage is None
+        result = OpenAIClient._parse_sse_event("data: [DONE]")
+        assert result is None
 
     def test_handles_empty_event(self) -> None:
-        deltas, usage = OpenAIClient._parse_sse_event("")
-        assert deltas == []
-        assert usage is None
+        result = OpenAIClient._parse_sse_event("")
+        assert result is None
 
     def test_handles_malformed_json(self) -> None:
-        deltas, usage = OpenAIClient._parse_sse_event("data: {{broken}")
-        assert deltas == []
-        assert usage is None
+        result = OpenAIClient._parse_sse_event("data: {{broken}")
+        assert result is None
 
     def test_extracts_data_line(self) -> None:
         """Ignores event: lines and only reads data: lines."""
         event_block = 'event: foo\ndata: {"choices":[{"delta":{"content":"ok"}}]}'
-        deltas, _usage = OpenAIClient._parse_sse_event(event_block)
-        assert deltas == ["ok"]
+        result = OpenAIClient._parse_sse_event(event_block)
+        assert result is not None
+        assert result.content == "ok"

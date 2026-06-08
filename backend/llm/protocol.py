@@ -10,7 +10,7 @@ from typing import AsyncIterable
 class Message:
     """A single message in a conversation."""
 
-    role: str  # "user" | "assistant" | "system"
+    role: str  # "user" | "assistant" | "system" | "tool"
     content: str
 
 
@@ -40,10 +40,43 @@ class LLMError(Exception):
 
 
 @dataclass
+class ToolDef:
+    """A tool definition to advertise to the LLM."""
+
+    name: str
+    description: str
+    parameters: dict  # JSON schema dict
+
+
+@dataclass
+class ToolCall:
+    """A tool call requested by the LLM."""
+
+    id: str
+    name: str
+    args: dict
+
+
+@dataclass
+class StreamEvent:
+    """A single event yielded during streaming generation.
+
+    Most events carry ``content`` (text delta) and no ``tool_calls``.
+    The final event carries accumulated ``usage`` and, if the model
+    requested tool calls, the complete ``tool_calls`` list.
+    """
+
+    content: str = ""
+    tool_calls: list[ToolCall] | None = None
+    usage: Usage | None = None
+
+
+@dataclass
 class LLMResponse:
     """A complete (non-streaming) response from the LLM."""
 
     content: str
+    tool_calls: list[ToolCall] | None = None
     finish_reason: str | None = None
     usage: Usage | None = None
 
@@ -69,6 +102,7 @@ class LLMClient(ABC):
         self,
         messages: list[Message],
         system: str | None = None,
+        tools: list[ToolDef] | None = None,
         **kwargs,
     ) -> LLMResponse:
         """Non-streaming generation. Returns the complete response."""
@@ -79,13 +113,14 @@ class LLMClient(ABC):
         self,
         messages: list[Message],
         system: str | None = None,
+        tools: list[ToolDef] | None = None,
         **kwargs,
-    ) -> AsyncIterable[tuple[str, Usage | None]]:
-        """Streaming generation. Yields ``(text_delta, usage)`` tuples.
+    ) -> AsyncIterable[StreamEvent]:
+        """Streaming generation. Yields ``StreamEvent`` tuples.
 
-        Most yields carry ``usage=None`` — the final chunk is guaranteed
-        to carry the accumulated ``Usage`` when the API provides it.
+        Most events carry ``content`` (text delta). The final event
+        carries accumulated ``usage`` and, if applicable, ``tool_calls``.
         """
         ...
         if False:  # pragma: no cover — make the generator type-check
-            yield "", None
+            yield StreamEvent()

@@ -3,7 +3,7 @@
 import json
 from typing import AsyncIterable
 
-from backend.llm.protocol import LLMClient, LLMResponse, Message, Usage
+from backend.llm.protocol import LLMClient, LLMResponse, Message, StreamEvent, ToolCall, ToolDef, Usage
 from backend.llm.transport import HttpTransport, Transport
 
 
@@ -29,9 +29,10 @@ class AnthropicClient(LLMClient):
         self,
         messages: list[Message],
         system: str | None = None,
+        tools: list[ToolDef] | None = None,
         **kwargs,
     ) -> LLMResponse:
-        body = self._build_body(messages, system, stream=False)
+        body = self._build_body(messages, system, tools, stream=False)
         response = await self._transport.send(
             f"{self.base_url}/messages",
             headers=self._headers(),
@@ -40,9 +41,18 @@ class AnthropicClient(LLMClient):
 
         data = response.json()
         content = ""
+        tool_calls = None
         for block in data.get("content", []):
             if block.get("type") == "text":
                 content += block.get("text", "")
+            elif block.get("type") == "tool_use":
+                if tool_calls is None:
+                    tool_calls = []
+                tool_calls.append(ToolCall(
+                    id=block["id"],
+                    name=block["name"],
+                    args=block.get("input", {}),
+                ))
 
         usage_data = data.get("usage", {})
         usage = Usage(
@@ -50,15 +60,16 @@ class AnthropicClient(LLMClient):
             output_tokens=usage_data.get("output_tokens", 0),
         )
 
-        return LLMResponse(content=content, usage=usage)
+        return LLMResponse(content=content, tool_calls=tool_calls, usage=usage)
 
     async def generate_stream(
         self,
         messages: list[Message],
         system: str | None = None,
+        tools: list[ToolDef] | None = None,
         **kwargs,
-    ) -> AsyncIterable[tuple[str, Usage | None]]:
-        body = self._build_body(messages, system, stream=True)
+    ) -> AsyncIterable[StreamEvent]:
+        body = self._build_body(messages, system, tools, stream=True)
         buffer = ""
         async for chunk in self._transport.send_stream(
             f"{self.base_url}/messages",
@@ -68,15 +79,13 @@ class AnthropicClient(LLMClient):
             buffer += chunk
             while "\n\n" in buffer:
                 event_block, buffer = buffer.split("\n\n", 1)
-                deltas, usage = self._parse_sse_event(event_block)
-                for delta in deltas:
-                    yield delta, usage
-                if not deltas and usage is not None:
-                    yield "", usage
+                event = self._parse_sse_event(event_block)
+                if event:
+                    yield event
         if buffer.strip():
-            deltas, usage = self._parse_sse_event(buffer)
-            for delta in deltas:
-                yield delta, usage
+            event = self._parse_sse_event(buffer)
+            if event:
+                yield event
 
     def _headers(self) -> dict:
         return {
@@ -89,6 +98,7 @@ class AnthropicClient(LLMClient):
         self,
         messages: list[Message],
         system: str | None,
+        tools: list[ToolDef] | None,
         stream: bool,
     ) -> dict:
         body: dict = {
@@ -103,19 +113,23 @@ class AnthropicClient(LLMClient):
         }
         if system:
             body["system"] = system
+        if tools:
+            body["tools"] = [
+                {
+                    "name": t.name,
+                    "description": t.description,
+                    "input_schema": t.parameters,
+                }
+                for t in tools
+            ]
         return body
 
     @staticmethod
-    def _parse_sse_event(
-        event_block: str,
-    ) -> tuple[list[str], Usage | None]:
+    def _parse_sse_event(event_block: str) -> StreamEvent | None:
         """Parse one SSE event block.
 
-        Returns (text_deltas, usage) — usage is populated from the final
-        message_stop event that carries token counts.
+        Returns a StreamEvent or None if the event carries no actionable data.
         """
-        deltas: list[str] = []
-        usage: Usage | None = None
         data_line = ""
 
         for line in event_block.splitlines():
@@ -126,30 +140,65 @@ class AnthropicClient(LLMClient):
                 data_line = ""
 
         if not data_line or data_line == "[DONE]":
-            return deltas, usage
+            return None
 
         try:
             event = json.loads(data_line)
         except json.JSONDecodeError:
-            return deltas, usage
+            return None
 
-        if event.get("type") == "content_block_delta":
+        event_type = event.get("type")
+
+        # Text content deltas
+        if event_type == "content_block_delta":
             delta = event.get("delta", {})
             if delta.get("type") == "text_delta":
                 text = delta.get("text", "")
                 if text:
-                    deltas.append(text)
-        elif event.get("type") == "message_start":
+                    return StreamEvent(content=text)
+            return None
+
+        # Message start — may contain initial content + tool_use blocks
+        if event_type == "message_start":
+            content = ""
+            tool_calls = None
             msg = event.get("message", {})
             for block in msg.get("content", []):
                 if block.get("type") == "text" and block.get("text"):
-                    deltas.append(block["text"])
-        elif event.get("type") == "message_delta":
+                    content += block["text"]
+                elif block.get("type") == "tool_use":
+                    if tool_calls is None:
+                        tool_calls = []
+                    tool_calls.append(ToolCall(
+                        id=block["id"],
+                        name=block["name"],
+                        args=block.get("input", {}),
+                    ))
+            if content or tool_calls:
+                return StreamEvent(content=content, tool_calls=tool_calls)
+            return None
+
+        # Message stop — carries final usage
+        if event_type == "message_delta":
             raw_usage = event.get("usage", {})
             if raw_usage:
                 usage = Usage(
                     input_tokens=raw_usage.get("input_tokens", 0),
                     output_tokens=raw_usage.get("output_tokens", 0),
                 )
+                return StreamEvent(usage=usage)
+            return None
 
-        return deltas, usage
+        # Content block start — might be a tool_use block starting
+        if event_type == "content_block_start":
+            block = event.get("content_block", {})
+            if block.get("type") == "tool_use":
+                tool_calls = [ToolCall(
+                    id=block["id"],
+                    name=block["name"],
+                    args=block.get("input", {}),
+                )]
+                return StreamEvent(tool_calls=tool_calls)
+            return None
+
+        return None

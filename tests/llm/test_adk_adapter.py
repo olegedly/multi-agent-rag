@@ -227,8 +227,8 @@ class TestAdkLlmAdapter:
             if not response.partial:
                 final_partial = response.partial
 
-        # ADK yields individual deltas (a, b) then a final re-accumulated chunk (ab)
-        assert parts == ["a", "b", "ab"]
+        # ADK yields individual deltas (a, b) then a final chunk with usage
+        assert parts == ["a", "b"]
         assert final_partial is False
 
     async def test_streaming_final_has_usage(self) -> None:
@@ -253,8 +253,8 @@ class TestAdkLlmAdapter:
             pass
 
         assert len(collecting.calls) == 1
-        _, system = collecting.calls[0]
-        assert system == "be concise"
+        _messages, _system, _tools = collecting.calls[0]
+        assert _system == "be concise"
 
     async def test_passes_messages(self) -> None:
         collecting = CollectingLLMClient(response="answer")
@@ -265,7 +265,7 @@ class TestAdkLlmAdapter:
             pass
 
         assert len(collecting.calls) == 1
-        messages, _ = collecting.calls[0]
+        messages, _sys, _tools = collecting.calls[0]
         assert len(messages) == 2
         assert messages[0].content == "hello"
         assert messages[1].content == "world"

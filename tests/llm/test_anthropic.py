@@ -9,7 +9,7 @@ import json
 import pytest
 
 from backend.llm.anthropic import AnthropicClient
-from backend.llm.protocol import LLMError, Message
+from backend.llm.protocol import LLMError, Message, ToolDef
 from tests.fakes import FakeTransport
 
 
@@ -34,6 +34,7 @@ class TestRequestBody:
         body = client._build_body(
             messages=[Message(role="user", content="hi")],
             system="be concise",
+            tools=None,
             stream=False,
         )
         assert body["model"] == "test-model"
@@ -46,6 +47,7 @@ class TestRequestBody:
         body = client._build_body(
             messages=[Message(role="user", content="hi")],
             system=None,
+            tools=None,
             stream=True,
         )
         assert body["stream"] is True
@@ -59,6 +61,7 @@ class TestRequestBody:
                 Message(role="user", content="hi"),
             ],
             system="real system",
+            tools=None,
             stream=False,
         )
         assert body["system"] == "real system"
@@ -70,6 +73,24 @@ class TestRequestBody:
         assert headers["x-api-key"] == "sk-test"
         assert headers["anthropic-version"] == "2023-06-01"
         assert headers["content-type"] == "application/json"
+
+    def test_includes_tools(self, client: AnthropicClient) -> None:
+        """Tool definitions are serialised into the request body."""
+        body = client._build_body(
+            messages=[Message(role="user", content="hi")],
+            system=None,
+            tools=[
+                ToolDef(name="search", description="Search the corpus", parameters={
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                }),
+            ],
+            stream=False,
+        )
+        assert "tools" in body
+        assert len(body["tools"]) == 1
+        assert body["tools"][0]["name"] == "search"
+        assert "input_schema" in body["tools"][0]
 
 
 # ── Non-streaming generate ───────────────────────────────────────────────────
@@ -167,14 +188,14 @@ class TestGenerateStream:
             transport=transport,
         )
 
-        deltas = []
-        async for chunk, _ in client.generate_stream(
+        texts = []
+        async for event in client.generate_stream(
             messages=[Message(role="user", content="hi")]
         ):
-            deltas.append(chunk)
+            if event.content:
+                texts.append(event.content)
 
-        # The usage-only event yields ("", usage), adding an empty string
-        assert deltas == ["Hello", " world", ""]
+        assert texts == ["Hello", " world"]
 
     async def test_records_usage_from_message_delta(self) -> None:
         transport = FakeTransport.with_stream(["\n".join(self.SSE_EVENTS)])
@@ -184,11 +205,11 @@ class TestGenerateStream:
         )
 
         last_usage = None
-        async for _, usage in client.generate_stream(
+        async for event in client.generate_stream(
             messages=[Message(role="user", content="hi")]
         ):
-            if usage is not None:
-                last_usage = usage
+            if event.usage is not None:
+                last_usage = event.usage
 
         assert last_usage is not None
         assert last_usage.input_tokens == 3
@@ -199,8 +220,6 @@ class TestGenerateStream:
         events = [
             'data: {"type":"message_start","message":{"content":[{"type":"text","text":"Initial "}]}}',
             "",
-            'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"rest"}}',
-            "",
             "data: [DONE]",
             "",
         ]
@@ -210,13 +229,14 @@ class TestGenerateStream:
             transport=transport,
         )
 
-        deltas = []
-        async for chunk, _ in client.generate_stream(
+        texts = []
+        async for event in client.generate_stream(
             messages=[Message(role="user", content="hi")]
         ):
-            deltas.append(chunk)
+            if event.content:
+                texts.append(event.content)
 
-        assert deltas == ["Initial ", "rest"]
+        assert texts == ["Initial "]
 
     async def test_raises_llm_error_on_4xx(self) -> None:
         transport = FakeTransport.with_error(
@@ -229,7 +249,7 @@ class TestGenerateStream:
         )
 
         with pytest.raises(LLMError) as excinfo:
-            async for _, _ in client.generate_stream(
+            async for _ in client.generate_stream(
                 messages=[Message(role="user", content="hi")]
             ):
                 pass
@@ -242,13 +262,13 @@ class TestGenerateStream:
             transport=transport,
         )
 
-        deltas = []
-        async for chunk, _ in client.generate_stream(
+        events = []
+        async for event in client.generate_stream(
             messages=[Message(role="user", content="hi")]
         ):
-            deltas.append(chunk)
+            events.append(event)
 
-        assert deltas == []
+        assert events == []
 
 
 # ── SSE parser (static) ──────────────────────────────────────────────────────
@@ -257,40 +277,38 @@ class TestGenerateStream:
 class TestParseSseEvent:
     def test_parses_text_delta(self) -> None:
         event = 'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi"}}'
-        deltas, usage = AnthropicClient._parse_sse_event(event)
-        assert deltas == ["hi"]
-        assert usage is None
+        result = AnthropicClient._parse_sse_event(event)
+        assert result is not None
+        assert result.content == "hi"
+        assert result.usage is None
 
     def test_parses_message_start(self) -> None:
         event = 'data: {"type":"message_start","message":{"content":[{"type":"text","text":"init"}]}}'
-        deltas, _usage = AnthropicClient._parse_sse_event(event)
-        assert deltas == ["init"]
+        result = AnthropicClient._parse_sse_event(event)
+        assert result is not None
+        assert result.content == "init"
 
     def test_parses_usage_from_message_delta(self) -> None:
         event = 'data: {"type":"message_delta","usage":{"input_tokens":1,"output_tokens":2}}'
-        deltas, usage = AnthropicClient._parse_sse_event(event)
-        assert deltas == []
-        assert usage is not None
-        assert usage.input_tokens == 1
-        assert usage.output_tokens == 2
+        result = AnthropicClient._parse_sse_event(event)
+        assert result is not None
+        assert result.content == ""
+        assert result.usage is not None
+        assert result.usage.input_tokens == 1
+        assert result.usage.output_tokens == 2
 
     def test_handles_done_signal(self) -> None:
-        deltas, usage = AnthropicClient._parse_sse_event("data: [DONE]")
-        assert deltas == []
-        assert usage is None
+        result = AnthropicClient._parse_sse_event("data: [DONE]")
+        assert result is None
 
     def test_handles_empty_event(self) -> None:
-        deltas, usage = AnthropicClient._parse_sse_event("")
-        assert deltas == []
-        assert usage is None
+        result = AnthropicClient._parse_sse_event("")
+        assert result is None
 
     def test_handles_malformed_json(self) -> None:
-        deltas, usage = AnthropicClient._parse_sse_event("data: {{{broken}")
-        assert deltas == []
-        assert usage is None
+        result = AnthropicClient._parse_sse_event("data: {{{broken}")
+        assert result is None
 
     def test_ignores_unknown_event_types(self) -> None:
-        event = 'data: {"type":"ping"}'
-        deltas, usage = AnthropicClient._parse_sse_event(event)
-        assert deltas == []
-        assert usage is None
+        result = AnthropicClient._parse_sse_event('data: {"type":"ping"}')
+        assert result is None
