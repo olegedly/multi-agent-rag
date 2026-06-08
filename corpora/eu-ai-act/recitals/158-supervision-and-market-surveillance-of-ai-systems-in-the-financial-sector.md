@@ -1,0 +1,25 @@
+---
+type: recital
+number: 158
+title: 'Supervision and market surveillance of AI systems in the financial sector'
+slug: recitals/supervision-and-market-surveillance-of-ai-systems-in-the-financial-sector
+source: https://en.ai-act.io/recital/supervision-and-market-surveillance-of-ai-systems-in-the-financial-sector
+related_articles:
+  - title: "Article 7: Amendments to Annex III"
+    slug: article/high-risk-ai-systems/classification-of-ai-systems-as-high-risk/amendments-to-annex-iii
+  - title: "Article 9: Risk management system"
+    slug: article/high-risk-ai-systems/requirements-for-high-risk-ai-systems/risk-management-system
+  - title: "Article 11: Technical documentation"
+    slug: article/high-risk-ai-systems/requirements-for-high-risk-ai-systems/technical-documentation
+  - title: "Article 17: Quality management system"
+    slug: article/high-risk-ai-systems/obligations-of-providers-and-deployers-of-high-risk-ai-systems-and-other-parties/quality-management-system
+  - title: "Article 18: Documentation keeping"
+    slug: article/high-risk-ai-systems/obligations-of-providers-and-deployers-of-high-risk-ai-systems-and-other-parties/documentation-keeping
+  - title: "Article 19: Automatically generated logs"
+    slug: article/high-risk-ai-systems/obligations-of-providers-and-deployers-of-high-risk-ai-systems-and-other-parties/automatically-generated-logs
+  - title: "Article 46: Derogation from conformity assessment procedure"
+    slug: article/high-risk-ai-systems/standards-conformity-assessment-certificates-registration/derogation-from-conformity-assessment-procedure
+---
+### Recital 158: Supervision and market surveillance of AI systems in the financial sector
+
+Union financial services law includes internal governance and risk-management rules and requirements which are applicable to regulated financial institutions in the course of provision of those services, including when they make use of AI systems. In order to ensure coherent application and enforcement of the obligations under this Regulation and relevant rules and requirements of the Union financial services legal acts, the competent authorities for the supervision and enforcement of those legal acts, in particular competent authorities as defined in Regulation (EU) No 575/2013 of the European Parliament and of the Council\[1\] and Directives 2008/48/EC\[2\], 2009/138/EC\[3\], 2013/36/EU\[4\], 2014/17/EU\[5\] and (EU) 2016/97\[6\] of the European Parliament and of the Council, should be designated, within their respective competences, as competent authorities for the purpose of supervising the implementation of this Regulation, including for market surveillance activities, as regards AI systems provided or used by regulated and supervised financial institutions unless Member States decide to designate another authority to fulfil these market surveillance tasks. Those competent authorities should have all powers under this Regulation and Regulation (EU) 2019/1020 to enforce the requirements and obligations of this Regulation, including powers to carry our ex post market surveillance activities that can be integrated, as appropriate, into their existing supervisory mechanisms and procedures under the relevant Union financial services law. It is appropriate to envisage that, when acting as market surveillance authorities under this Regulation, the national authorities responsible for the supervision of credit institutions regulated under Directive 2013/36/EU, which are participating in the Single Supervisory Mechanism established by Council Regulation (EU) No 1024/2013\[7\], should report, without delay, to the European Central Bank any information identified in the course of their market surveillance activities that may be of potential interest for the European Central Bank’s prudential supervisory tasks as specified in that Regulation. To further enhance the consistency between this Regulation and the rules applicable to credit institutions regulated under Directive 2013/36/EU, it is also appropriate to integrate some of the providers’ procedural obligations in relation to risk management, post marketing monitoring and documentation into the existing obligations and procedures under Directive 2013/36/EU. In order to avoid overlaps, limited derogations should also be envisaged in relation to the quality management system of providers and the monitoring obligation placed on deployers of high-risk AI systems to the extent that these apply to credit institutions regulated by Directive 2013/36/EU. The same regime should apply to insurance and re-insurance undertakings and insurance holding companies under Directive 2009/138/EC and the insurance intermediaries under Directive (EU) 2016/97 and other types of financial institutions subject to requirements regarding internal governance, arrangements or processes established pursuant to the relevant Union financial services law to ensure consistency and equal treatment in the financial sector.

@@ -1,0 +1,13 @@
+---
+type: recital
+number: 95
+title: 'Protection regulations for subsequent remote biometric identification'
+slug: recitals/protection-regulations-for-subsequent-remote-biometric-identification
+source: https://en.ai-act.io/recital/protection-regulations-for-subsequent-remote-biometric-identification
+related_articles:
+  - title: "Article 26: Obligations of deployers of high-risk AI systems"
+    slug: article/high-risk-ai-systems/obligations-of-providers-and-deployers-of-high-risk-ai-systems-and-other-parties/obligations-of-deployers-of-high-risk-ai-systems
+---
+### Recital 95: Protection regulations for subsequent remote biometric identification
+
+Without prejudice to applicable Union law, in particular Regulation (EU) 2016/679 and Directive (EU) 2016/680, considering the intrusive nature of post-remote biometric identification systems, the use of post-remote biometric identification systems should be subject to safeguards. Post-remote biometric identification systems should always be used in a way that is proportionate, legitimate and strictly necessary, and thus targeted, in terms of the individuals to be identified, the location, temporal scope and based on a closed data set of legally acquired video footage. In any case, post-remote biometric identification systems should not be used in the framework of law enforcement to lead to indiscriminate surveillance. The conditions for post-remote biometric identification should in any case not provide a basis to circumvent the conditions of the prohibition and strict exceptions for real time remote biometric identification.

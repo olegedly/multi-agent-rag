@@ -1,0 +1,10 @@
+---
+type: recital
+number: 130
+title: 'Specific grounds for placing on the market without conformity assessment'
+slug: recitals/specific-grounds-for-placing-on-the-market-without-conformity-assessment
+source: https://en.ai-act.io/recital/specific-grounds-for-placing-on-the-market-without-conformity-assessment
+---
+### Recital 130: Specific grounds for placing on the market without conformity assessment
+
+Under certain conditions, rapid availability of innovative technologies may be crucial for health and safety of persons, the protection of the environment and climate change and for society as a whole. It is thus appropriate that under exceptional reasons of public security or protection of life and health of natural persons, environmental protection and the protection of key industrial and infrastructural assets, market surveillance authorities could authorise the placing on the market or the putting into service of AI systems which have not undergone a conformity assessment. In duly justified situations, as provided for in this Regulation, law enforcement authorities or civil protection authorities may put a specific high-risk AI system into service without the authorisation of the market surveillance authority, provided that such authorisation is requested during or after the use without undue delay.
