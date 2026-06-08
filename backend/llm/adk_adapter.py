@@ -99,6 +99,18 @@ class AdkLlmAdapter(BaseLlm):
         super().__init__(model=client.model)
         self._client = client
 
+    async def _finalize_usage(
+        self, usage: Usage | None
+    ) -> types.GenerateContentResponseUsageMetadata | None:
+        """Fire the usage callback (if set) and return ADK usage metadata.
+
+        Shared by both the streaming and non-streaming paths so the
+        callback-firing logic lives in one place.
+        """
+        if usage is not None and self._client.usage_callback is not None:
+            await self._client.usage_callback(usage)
+        return _usage_to_adk(usage)
+
     async def generate_content_async(
         self,
         llm_request: LlmRequest,
@@ -123,7 +135,7 @@ class AdkLlmAdapter(BaseLlm):
                     ),
                     partial=True,
                 )
-            usage_adk = _usage_to_adk(accumulated_usage)
+            usage_adk = await self._finalize_usage(accumulated_usage)
             yield LlmResponse(
                 content=types.Content(
                     role="model",
@@ -132,12 +144,9 @@ class AdkLlmAdapter(BaseLlm):
                 partial=False,
                 usage_metadata=usage_adk,
             )
-            # Fire usage callback after streaming completes
-            if accumulated_usage is not None and self._client.usage_callback is not None:
-                await self._client.usage_callback(accumulated_usage)
         else:
             response = await self._client.generate(messages, system=system)
-            usage_adk = _usage_to_adk(response.usage)
+            usage_adk = await self._finalize_usage(response.usage)
             yield LlmResponse(
                 content=types.Content(
                     role="model",
@@ -146,6 +155,3 @@ class AdkLlmAdapter(BaseLlm):
                 partial=False,
                 usage_metadata=usage_adk,
             )
-            # Fire usage callback after non-streaming completes
-            if response.usage is not None and self._client.usage_callback is not None:
-                await self._client.usage_callback(response.usage)

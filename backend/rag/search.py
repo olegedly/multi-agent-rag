@@ -5,7 +5,7 @@ Provides two corpus-scoped operations:
 - ``read_document``: Return all chunks from the same source file(s) as given chunk IDs.
 """
 
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -13,14 +13,20 @@ from sqlalchemy import text
 from backend.embeddings.protocol import EmbeddingClient
 
 
+@runtime_checkable
 class AsyncSession(Protocol):
-    """Minimal async session protocol — just what ``search.py`` needs."""
+    """Minimal async session protocol — just what ``search.py`` needs.
+
+    Narrower than SQLAlchemy's full ``AsyncSession`` — only the methods
+    this module actually calls.
+    """
 
     async def execute(self, statement: object, parameters: object | None = None) -> Any: ...
     async def __aenter__(self) -> "AsyncSession": ...
     async def __aexit__(self, *args: object) -> None: ...
 
 
+@runtime_checkable
 class AsyncSessionMaker(Protocol):
     """Minimal sessionmaker protocol — callable returning an async session."""
 

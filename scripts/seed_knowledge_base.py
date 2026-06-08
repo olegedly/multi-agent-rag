@@ -27,9 +27,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backend.config import get_settings
 from backend.corpus_config import CorporaConfig
-from backend.db import create_db_sessionmaker, init_db
+from backend.db import create_db_sessionmaker, migrate_db
 from backend.embeddings.factory import create_embedding_client
-from backend.models import Base, Document, DocumentSource
+from backend.models import Document, DocumentSource
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -229,37 +229,9 @@ async def main(argv: list[str] | None = None) -> int:
             return 1
         to_seed = [matched]
 
-    # ── Initialize database ──────────────────────────────────────────
+    # ── Migrate database ────────────────────────────────────────────
     settings = get_settings()
-    await init_db(settings.database_url)
-    engine = None
-    try:
-        from sqlalchemy import text
-        from sqlalchemy.ext.asyncio import create_async_engine
-        engine = create_async_engine(settings.database_url)
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-            # Create IVFFlat index for cosine-similarity search
-            await conn.execute(text(
-                "CREATE INDEX IF NOT EXISTS ix_documents_embedding "
-                "ON documents USING ivfflat (embedding vector_cosine_ops) "
-                "WITH (lists = 10)"
-            ))
-
-            # Migrate: add FK if the table existed before the FK was defined
-            await conn.execute(text(
-                "DO $$ BEGIN "
-                "ALTER TABLE documents "
-                "ADD CONSTRAINT fk_document_source "
-                "FOREIGN KEY (corpus_id, source_filename) "
-                "REFERENCES document_sources(corpus_id, filename) "
-                "ON DELETE CASCADE; "
-                "EXCEPTION WHEN duplicate_object THEN NULL; "
-                "END $$"
-            ))
-    finally:
-        if engine:
-            await engine.dispose()
+    await migrate_db(settings.database_url)
 
     sessionmaker = create_db_sessionmaker(settings.database_url)
     embedding_client = create_embedding_client()

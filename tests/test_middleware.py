@@ -17,53 +17,58 @@ from fastapi.testclient import TestClient
 
 from backend.config import Settings
 from backend.main import create_app
-from backend.middleware import BudgetFile
+from backend.middleware import BudgetStore, JsonFileBudget
 from tests.fakes import FakeLLMClient
 
 
 # ── Budget File Helpers ──────────────────────────────────────────────────────
 
 
-class TestBudgetFile:
-    """BudgetFile: auto-create, date-reset, read/write.
+class TestFileBudget:
+    """JsonFileBudget: auto-create, date-reset, read/write.
 
     Uses a temp directory for isolation — no shared state between tests.
+    Satisfies the BudgetStore Protocol.
     """
 
     @pytest.fixture
-    def tmp_budget(self, tmp_path) -> BudgetFile:
-        return BudgetFile(path=str(tmp_path / "demo-budget.json"), daily_limit=100)
+    def tmp_budget(self, tmp_path) -> JsonFileBudget:
+        return JsonFileBudget(path=str(tmp_path / "demo-budget.json"), daily_limit=100)
 
-    def test_auto_creates_on_read(self, tmp_budget: BudgetFile) -> None:
+    def test_satisfies_budget_store_protocol(self, tmp_budget: JsonFileBudget) -> None:
+        """JsonFileBudget is runtime-checkable as BudgetStore."""
+        assert isinstance(tmp_budget, BudgetStore)
+
+    def test_auto_creates_on_read(self, tmp_budget: JsonFileBudget) -> None:
         """Reading a non-existent file creates it with today's date and 0 tokens."""
         d, t = tmp_budget.read()
         assert t == 0
         assert d == date.today().isoformat()
 
-    def test_increments_tokens(self, tmp_budget: BudgetFile) -> None:
+    def test_increments_tokens(self, tmp_budget: JsonFileBudget) -> None:
         tmp_budget.add_tokens(30)
         _, t = tmp_budget.read()
         assert t == 30
 
-    def test_accumulates_multiple_increments(self, tmp_budget: BudgetFile) -> None:
+    def test_accumulates_multiple_increments(self, tmp_budget: JsonFileBudget) -> None:
         tmp_budget.add_tokens(10)
         tmp_budget.add_tokens(25)
         _, t = tmp_budget.read()
         assert t == 35
 
-    def test_not_exhausted_when_under_limit(self, tmp_budget: BudgetFile) -> None:
+    def test_not_exhausted_when_under_limit(self, tmp_budget: JsonFileBudget) -> None:
         tmp_budget.add_tokens(50)
         assert not tmp_budget.is_exhausted()
 
-    def test_exhausted_at_limit(self, tmp_budget: BudgetFile) -> None:
+    def test_exhausted_at_limit(self, tmp_budget: JsonFileBudget) -> None:
         tmp_budget.add_tokens(100)
         assert tmp_budget.is_exhausted()
 
-    def test_exhausted_over_limit(self, tmp_budget: BudgetFile) -> None:
+    def test_exhausted_over_limit(self, tmp_budget: JsonFileBudget) -> None:
         tmp_budget.add_tokens(150)
         assert tmp_budget.is_exhausted()
 
-    def test_preserves_data_through_read_write_cycle(self, tmp_budget: BudgetFile) -> None:
+    def test_preserves_data_through_read_write_cycle(self, tmp_budget: JsonFileBudget) -> None:
         tmp_budget.add_tokens(42)
         tmp_budget.add_tokens(1)
         d, t = tmp_budget.read()
@@ -112,7 +117,7 @@ class TestBudgetMiddleware:
         assert response.status_code == 200
 
         # Check the budget was incremented
-        budget = BudgetFile(
+        budget = JsonFileBudget(
             path=str(tmp_path / "demo-budget.json"),
             daily_limit=50,
         )
@@ -122,7 +127,7 @@ class TestBudgetMiddleware:
 
     def test_returns_429_when_budget_exhausted(self, client: TestClient, tmp_path) -> None:
         """Pre-seed the budget file to be over the limit."""
-        budget = BudgetFile(
+        budget = JsonFileBudget(
             path=str(tmp_path / "demo-budget.json"),
             daily_limit=50,
         )
@@ -136,7 +141,7 @@ class TestBudgetMiddleware:
 
     def test_budget_not_incremented_on_rejected_request(self, client: TestClient, tmp_path) -> None:
         """When budget is exhausted, the usage_callback should not fire."""
-        budget = BudgetFile(
+        budget = JsonFileBudget(
             path=str(tmp_path / "demo-budget.json"),
             daily_limit=50,
         )
@@ -161,7 +166,7 @@ class TestBudgetDevBypass:
     def test_allows_request_when_exhausted(self, tmp_path) -> None:
         """Even with exhausted budget, disabled mode allows request through."""
         # Pre-seed exhausted budget
-        budget = BudgetFile(path=str(tmp_path / "budget.json"), daily_limit=50)
+        budget = JsonFileBudget(path=str(tmp_path / "budget.json"), daily_limit=50)
         budget.add_tokens(100)
 
         app = create_app(

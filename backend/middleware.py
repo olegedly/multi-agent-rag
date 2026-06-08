@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import Protocol, runtime_checkable
 from datetime import date, datetime, timezone
 
 from fastapi import Request
@@ -17,16 +18,45 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-# ── Budget File Helpers ──────────────────────────────────────────────────────
+
+# ── Budget Store Protocol ────────────────────────────────────────────────────
 
 
-class BudgetFile:
-    """Read/write the daily demo token budget file.
+@runtime_checkable
+class BudgetStore(Protocol):
+    """Abstract token budget store.
+
+    Satisfied by :class:`JsonFileBudget` (file-backed, single worker) and
+    by any in-memory or Redis-backed adapter in tests or production.
+    """
+
+    daily_limit: int
+
+    def read(self) -> tuple[str, int]:
+        """Return ``(date_str, tokens_used)``."""
+        ...
+
+    def add_tokens(self, tokens: int) -> None:
+        """Accumulate *tokens* into the running total."""
+        ...
+
+    def is_exhausted(self) -> bool:
+        """Return ``True`` if the budget has been fully consumed."""
+        ...
+
+
+# ── Budget File Implementation ───────────────────────────────────────────────
+
+
+class JsonFileBudget:
+    """Read/write the daily demo token budget to a JSON file on disk.
 
     Format: {"date": "2026-06-07", "tokens": 0}
     - Lazy-created on first access.
     - Auto-reset if ``date != today``.
     - Thread-safe enough for a demo (single uvicorn worker).
+
+    Satisfies :class:`BudgetStore`.
     """
 
     def __init__(self, path: str, daily_limit: int):
@@ -88,7 +118,7 @@ class ChatGuard(BaseHTTPMiddleware):
         app: ASGIApp,
         max_query_length: int,
         max_user_messages: int,
-        budget_file: BudgetFile | None = None,
+        budget_file: BudgetStore | None = None,
     ):
         super().__init__(app)
         self.max_query_length = max_query_length

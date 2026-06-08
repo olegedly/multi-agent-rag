@@ -18,7 +18,7 @@ from backend.llm.adk_adapter import AdkLlmAdapter
 from backend.llm.factory import create_llm_client
 from backend.llm.protocol import LLMClient
 from backend.llm.transport import HttpTransport
-from backend.middleware import BudgetFile, ChatGuard
+from backend.middleware import BudgetStore, ChatGuard, JsonFileBudget
 
 
 def create_app(
@@ -76,9 +76,9 @@ def create_app(
     # Daily token budget — shared between middleware (read) and
     # usage_callback (write).
     # ------------------------------------------------------------------
-    budget_file: BudgetFile | None = None
+    budget_file: BudgetStore | None = None
     if not settings.demo_disable_budget:
-        budget_file = BudgetFile(
+        budget_file = JsonFileBudget(
             path=settings.demo_budget_file,
             daily_limit=settings.demo_daily_budget_tokens,
         )
