@@ -163,18 +163,7 @@ async def seed_corpus(
                 )
             )
 
-            # Insert new chunks
-            for chunk, embedding in zip(chunks, embeddings, strict=True):
-                doc = Document(
-                    corpus_id=corpus_id,
-                    source_filename=key,
-                    content=chunk.content,
-                    embedding=embedding,
-                    doc_metadata=chunk.metadata,
-                )
-                session.add(doc)
-
-            # Upsert document_source
+            # Upsert document_source FIRST (FK target for documents)
             existing = await session.get(DocumentSource, (corpus_id, key))
             if existing:
                 existing.content_hash = _sha256(content)
@@ -184,6 +173,18 @@ async def seed_corpus(
                     filename=key,
                     content_hash=_sha256(content),
                 ))
+            await session.flush()
+
+            # Insert new chunks (FK references document_source now present)
+            for chunk, embedding in zip(chunks, embeddings, strict=True):
+                doc = Document(
+                    corpus_id=corpus_id,
+                    source_filename=key,
+                    content=chunk.content,
+                    embedding=embedding,
+                    doc_metadata=chunk.metadata,
+                )
+                session.add(doc)
 
             await session.commit()
 

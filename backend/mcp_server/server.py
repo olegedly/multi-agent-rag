@@ -25,6 +25,9 @@ from backend.rag.search import search_corpus as _search_corpus
 def create_mcp_server(
     embedding_client: EmbeddingClient | None = None,
     sessionmaker: Any | None = None,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8000,
 ) -> FastMCP:
     """Build and return a configured FastMCP instance.
 
@@ -36,6 +39,10 @@ def create_mcp_server(
     sessionmaker : optional
         Inject a fake sessionmaker for testing. When ``None`` (default) the
         server lazily creates one on first tool call.
+    host : str
+        Bind address for SSE transport (default ``"127.0.0.1"``).
+    port : int
+        Bind port for SSE transport (default ``8000``).
 
     Returns
     -------
@@ -46,6 +53,8 @@ def create_mcp_server(
     mcp = FastMCP(
         "RAG Tools",
         instructions="Semantic search and document retrieval over RAG corpora",
+        host=host,
+        port=port,
     )
 
     # Capture deps in closures — resolved once on first tool call

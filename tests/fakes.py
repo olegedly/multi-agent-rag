@@ -223,7 +223,7 @@ class FakeSession:
         sql_str = str(statement)
         params = parameters if isinstance(parameters, dict) else {}
 
-        if "ORDER BY embedding <=> :query_vec" in sql_str:
+        if "ORDER BY embedding <=> CAST(:query_vec AS vector)" in sql_str:
             corpus_id = params.get("corpus_id")
             top_k = params.get("top_k", 5)
             matching = [

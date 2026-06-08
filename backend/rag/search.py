@@ -61,21 +61,24 @@ async def search_corpus(
     vecs = await embedding_client.embed_texts([query])
     query_vec = vecs[0]
 
+    # asyncpg/pgvector needs a string literal for vector values
+    query_vec_str = "[" + ",".join(str(v) for v in query_vec) + "]"
+
     async with sessionmaker() as session:
         sql = text(
             """
             SELECT id, corpus_id, content, metadata,
-                   1 - (embedding <=> :query_vec) AS score
+                   1 - (embedding <=> CAST(:query_vec AS vector)) AS score
             FROM documents
             WHERE corpus_id = :corpus_id
-            ORDER BY embedding <=> :query_vec
+            ORDER BY embedding <=> CAST(:query_vec AS vector)
             LIMIT :top_k
             """
         )
         rows = await session.execute(
             sql,
             {
-                "query_vec": query_vec,
+                "query_vec": query_vec_str,
                 "corpus_id": corpus_id,
                 "top_k": top_k,
             },
