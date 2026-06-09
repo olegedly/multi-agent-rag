@@ -1,5 +1,12 @@
 import { For, Show, createSignal, createEffect, onMount } from "solid-js";
-import type { UIMessage } from "@tanstack/ai-client";
+import type {
+  UIMessage,
+  MessagePart,
+  TextPart,
+  ToolCallPart,
+  ToolResultPart,
+  ThinkingPart,
+} from "@tanstack/ai-client";
 
 interface ChatViewProps {
   messages: () => UIMessage[];
@@ -113,15 +120,7 @@ export function ChatView(props: ChatViewProps) {
                   {msg.role}
                 </div>
                 <For each={msg.parts}>
-                  {(part) => (
-                    <>
-                      {part.type === "text" && (
-                        <p class="text-sm whitespace-pre-wrap">
-                          {part.content}
-                        </p>
-                      )}
-                    </>
-                  )}
+                  {(part) => <PartRenderer part={part} />}
                 </For>
               </div>
             </div>
@@ -172,7 +171,7 @@ export function ChatView(props: ChatViewProps) {
               }
             }}
             placeholder="Type your message..."
-            class="flex-1 resize-none rounded-xl px-4 py-2 text-sm bg-(--bg-chat-input) text-(--text-primary) border border-(--border) focus:outline-none focus:border-(--accent) transition-colors placeholder:text-(--text-secondary) disabled:opacity-50 max-h-45 overflow-y-auto"
+            class="flex-1 resize-none rounded-xl px-4 py-2 text-sm bg-(--bg-chat-input) text-(--text-primary) border border-(--border) focus:outline-none focus:border-(--accent) transition-colors placeholder:text-(--text-secondary) disabled:opacity-50 max-h-45 overflow-y-hidden"
             rows={1}
           />
           <Show
@@ -196,6 +195,231 @@ export function ChatView(props: ChatViewProps) {
             </button>
           </Show>
         </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Part renderer ──────────────────────────────────────────────────────────
+
+function PartRenderer(props: { part: MessagePart }) {
+  return (
+    <>
+      {props.part.type === "text" && <TextPartRenderer part={props.part} />}
+      {props.part.type === "thinking" && (
+        <ThinkingPartRenderer part={props.part} />
+      )}
+      {props.part.type === "tool-call" && (
+        <ToolCallPartRenderer part={props.part} />
+      )}
+      {props.part.type === "tool-result" && (
+        <ToolResultPartRenderer part={props.part} />
+      )}
+    </>
+  );
+}
+
+// ── Text part (existing behavior) ─────────────────────────────────────────
+
+function TextPartRenderer(props: { part: TextPart }) {
+  return <p class="text-sm whitespace-pre-wrap">{props.part.content}</p>;
+}
+
+// ── Thinking/reasoning part (collapsible) ─────────────────────────────────
+
+function ThinkingPartRenderer(props: { part: ThinkingPart }) {
+  const [expanded, setExpanded] = createSignal(true);
+
+  return (
+    <div class="mb-2">
+      <button
+        onClick={() => setExpanded(!expanded())}
+        class="flex items-center gap-1.5 text-xs font-medium text-(--text-secondary) hover:text-(--accent) transition-colors cursor-pointer"
+      >
+        {/* Collapse/expand chevron */}
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          class={`h-3.5 w-3.5 transition-transform ${expanded() ? "rotate-90" : ""}`}
+          viewBox="0 0 20 20"
+          fill="currentColor"
+        >
+          <path
+            fill-rule="evenodd"
+            d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
+            clip-rule="evenodd"
+          />
+        </svg>
+        <span>Reasoned</span>
+      </button>
+      <Show when={expanded()}>
+        <div class="mt-1 p-2 rounded-lg bg-(--bg-primary) border border-(--border) text-xs text-(--text-secondary) italic whitespace-pre-wrap leading-relaxed">
+          {props.part.content}
+        </div>
+      </Show>
+    </div>
+  );
+}
+
+// ── Tool call part ────────────────────────────────────────────────────────
+
+const TOOL_CALL_LABELS: Record<string, string> = {
+  "awaiting-input": "awaiting input",
+  "input-streaming": "streaming",
+  "input-complete": "processing",
+  "approval-requested": "needs approval",
+  "approval-responded": "approved",
+  complete: "done",
+};
+
+function ToolCallPartRenderer(props: { part: ToolCallPart }) {
+  return (
+    <div class="mt-4 mb-2 flex items-start gap-2 text-xs">
+      {/* Tool icon */}
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        class="h-3.5 w-3.5 mt-0.5 shrink-0 text-(--accent)"
+        viewBox="0 0 20 20"
+        fill="currentColor"
+      >
+        <path
+          fill-rule="evenodd"
+          d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"
+          clip-rule="evenodd"
+        />
+      </svg>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-1.5">
+          <code class="font-mono font-medium text-(--text-primary)">
+            {props.part.name}
+          </code>
+          <span
+            class={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+              props.part.state === "complete"
+                ? "bg-green-900/30 text-green-400"
+                : props.part.state === "input-streaming"
+                  ? "bg-blue-900/30 text-blue-400"
+                  : props.part.state === "awaiting-input"
+                    ? "bg-yellow-900/30 text-yellow-400"
+                    : "bg-gray-700/30 text-gray-400"
+            }`}
+          >
+            {TOOL_CALL_LABELS[props.part.state] ?? props.part.state}
+          </span>
+        </div>
+        <div class="mt-0.5 text-(--text-secondary) font-mono text-[11px] whitespace-pre-wrap max-h-24 overflow-y-auto">
+          {formatToolResult(props.part.arguments)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── YAML formatter for tool results ───────────────────────────────────────
+
+function formatToolResult(content: string | Array<any>): string {
+  if (typeof content !== "string") {
+    return JSON.stringify(content, null, 2);
+  }
+
+  // Try to parse as JSON and render as YAML. Fall back to raw string.
+  try {
+    const parsed = JSON.parse(content);
+    return jsonToYaml(parsed);
+  } catch {
+    // Not JSON — show as-is
+    return content;
+  }
+}
+
+function jsonToYaml(value: unknown, indent: number = 0): string {
+  const pad = "  ".repeat(indent);
+
+  if (value === null || value === undefined) return "null";
+
+  if (typeof value === "string") {
+    // RAG content often contains literal \n sequences — treat as newlines
+    const clean = value.replace(/\\n/g, "\n");
+    // Multi-line block scalar
+    if (clean.includes("\n")) {
+      const lines = clean.split("\n");
+      return `|\n${pad}  ${lines.join(`\n${pad}  `)}`;
+    }
+    // Unquoted scalar if it's a simple word; otherwise quoted
+    if (
+      /^[a-zA-Z0-9_/.\- ]+$/.test(clean) &&
+      !/^[\-:?\[\]{}#,|>!@&*'"%`]/.test(clean)
+    ) {
+      return clean;
+    }
+    return `"${clean}"`;
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    const items = value.map((item) => {
+      if (typeof item === "object" && item !== null) {
+        const sub = jsonToYaml(item, indent + 1);
+        const lines = sub.split("\n");
+        return (
+          `${pad}- ${lines[0]}` +
+          lines
+            .slice(1)
+            .map((l) => `\n${pad}  ${l}`)
+            .join("")
+        );
+      }
+      return `${pad}- ${jsonToYaml(item, indent + 1)}`;
+    });
+    return items.join("\n");
+  }
+
+  // Plain object
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) return "{}";
+  return entries
+    .map(([key, val]) => {
+      const keyStr = /^[a-zA-Z_]\w*$/.test(key) ? key : JSON.stringify(key);
+      const rendered = jsonToYaml(val, indent + 1);
+      if (
+        val === null ||
+        typeof val === "string" ||
+        typeof val === "number" ||
+        typeof val === "boolean"
+      ) {
+        return `${pad}${keyStr}: ${rendered}`;
+      }
+      // Object or array — value renders on subsequent lines
+      return `${pad}${keyStr}:\n${rendered}`;
+    })
+    .join("\n");
+}
+
+// ── Tool result part ──────────────────────────────────────────────────────
+
+function ToolResultPartRenderer(props: { part: ToolResultPart }) {
+  return (
+    <div class="mb-2 flex items-start gap-2">
+      {/* Result icon */}
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        class="h-3.5 w-3.5 mt-0.5 shrink-0 text-green-400"
+        viewBox="0 0 20 20"
+        fill="currentColor"
+      >
+        <path
+          fill-rule="evenodd"
+          d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+          clip-rule="evenodd"
+        />
+      </svg>
+      <div class="flex-1 min-w-0">
+        <div class="text-xs text-(--text-secondary) font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
+          {formatToolResult(props.part.content)}
+        </div>
       </div>
     </div>
   );

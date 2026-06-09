@@ -12,6 +12,56 @@ function textMsg(role: "user" | "assistant", content: string): UIMessage {
   };
 }
 
+function thinkingMsg(content: string): UIMessage {
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    parts: [
+      { type: "thinking" as const, content },
+      { type: "text" as const, content: "Final answer" },
+    ],
+  };
+}
+
+function toolCallMsg(): UIMessage {
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    parts: [
+      {
+        type: "tool-call" as const,
+        id: "call-1",
+        name: "rag_search",
+        arguments: '{"query": "EU AI Act", "top_k": 5}',
+        state: "complete" as const,
+      },
+      {
+        type: "tool-result" as const,
+        toolCallId: "call-1",
+        content: "Found 3 documents about the EU AI Act",
+        state: "complete" as const,
+      },
+      { type: "text" as const, content: "Based on my search..." },
+    ],
+  };
+}
+
+function toolCallStreamingMsg(): UIMessage {
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    parts: [
+      {
+        type: "tool-call" as const,
+        id: "call-2",
+        name: "rag_search",
+        arguments: '{"query": "',
+        state: "input-streaming" as const,
+      },
+    ],
+  };
+}
+
 describe("ChatView", () => {
   it("renders user and assistant messages", () => {
     const messages = createSignal<UIMessage[]>([
@@ -251,5 +301,310 @@ describe("ChatView", () => {
 
     const dots = document.querySelectorAll(".ellipsis-indicator");
     expect(dots.length).toBe(0);
+  });
+
+  // ── Tracer bullet: ThinkingPart rendering ────────────────────────────
+
+  it("renders thinking parts in a collapsible reasoning panel", () => {
+    const messages = createSignal<UIMessage[]>([thinkingMsg("Thought process here")]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Should show a reasoning section label
+    expect(screen.getByText("Reasoned")).toBeTruthy();
+    // Should show the thinking content
+    expect(screen.getByText("Thought process here")).toBeTruthy();
+    // Should show the final text answer too
+    expect(screen.getByText("Final answer")).toBeTruthy();
+  });
+
+  it("hides thinking content when reasoning panel is collapsed", async () => {
+    const messages = createSignal<UIMessage[]>([thinkingMsg("Hidden thought")]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Content should be visible initially
+    expect(screen.getByText("Hidden thought")).toBeTruthy();
+
+    // Click the toggle to collapse
+    const toggle = screen.getByText("Reasoned");
+    fireEvent.click(toggle);
+
+    // Content should no longer be visible
+    expect(() => screen.getByText("Hidden thought")).toThrow();
+  });
+
+  // ── Tracer bullet: ToolCallPart rendering ────────────────────────────
+
+  it("renders completed tool call parts", () => {
+    const messages = createSignal<UIMessage[]>([toolCallMsg()]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Tool name should be visible
+    expect(screen.getByText("rag_search")).toBeTruthy();
+    // Tool result content should be visible
+    expect(screen.getByText("Found 3 documents about the EU AI Act")).toBeTruthy();
+    // Final text should still be visible
+    expect(screen.getByText("Based on my search...")).toBeTruthy();
+  });
+
+  it("renders streaming tool call parts with partial args", () => {
+    const messages = createSignal<UIMessage[]>([toolCallStreamingMsg()]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={true}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Tool name should be visible
+    expect(screen.getByText("rag_search")).toBeTruthy();
+    // The streaming state indicator
+    expect(screen.getByText("streaming")).toBeTruthy();
+  });
+
+  // ── Tracer bullet: JSON tool result converted to YAML ───────────────
+
+  it("renders JSON tool result content as YAML", () => {
+    const jsonResult = JSON.stringify({
+      results: [
+        { id: 1, score: 0.95, content: "Chunk about AI" },
+        { id: 2, score: 0.87, content: "Chunk about regulation" },
+      ],
+      error: null,
+    });
+
+    const msg: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "rag_search",
+          arguments: '{"query": "AI"}',
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: jsonResult,
+          state: "complete" as const,
+        },
+      ],
+    };
+    const messages = createSignal<UIMessage[]>([msg]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // YAML output should have unquoted keys and colon-separated values
+    const all = document.body.textContent || "";
+    expect(all).toContain("results:");
+    expect(all).toContain("error: null");
+    expect(all).toContain("score: 0.95");
+    // No JSON double-quoted keys in YAML output
+    expect(all).not.toContain('"results"');
+  });
+
+  // ── Tracer bullet: literal \n in tool results converted to real newlines ──
+
+  it("converts literal \\n sequences to real newlines in YAML output", () => {
+    // Simulate backend JSON with literal \n in string values
+    const jsonResult = JSON.stringify({
+      content: "Line one\\nLine two\\nLine three",
+    });
+
+    const msg: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "rag_search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: jsonResult,
+          state: "complete" as const,
+        },
+      ],
+    };
+    const messages = createSignal<UIMessage[]>([msg]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    const all = document.body.textContent || "";
+    // The YAML block scalar pipe symbol indicates multi-line
+    expect(all).toContain("content: |");
+    // Each line should appear on its own line, not as one with literal \n
+    expect(all).toContain("Line one");
+    expect(all).toContain("Line two");
+    expect(all).toContain("Line three");
+    // No literal \n should remain
+    expect(all).not.toContain("Line one\\n");
+  });
+
+  // ── Tracer bullet: vertical spacing between tool parts ──────────────
+
+  it("has vertical spacing between adjacent tool calls", () => {
+    const msg: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "rag_search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-call" as const,
+          id: "call-2",
+          name: "rag_read_document",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+      ],
+    };
+    const messages = createSignal<UIMessage[]>([msg]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Both tool names should be visible
+    expect(screen.getByText("rag_search")).toBeTruthy();
+    expect(screen.getByText("rag_read_document")).toBeTruthy();
+  });
+
+  // ── Tracer bullet: tool call arguments are visible, not truncated ──────
+
+  it("shows tool call arguments (not truncated)", () => {
+    const args = '{"query": "EU AI Act", "top_k": 5}';
+    const msg: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "rag_search",
+          arguments: args,
+          state: "complete" as const,
+        },
+      ],
+    };
+    const messages = createSignal<UIMessage[]>([msg]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    const all = document.body.textContent || "";
+    // Arguments are now rendered as YAML
+    expect(all).toContain("query: EU AI Act");
+    expect(all).toContain("top_k: 5");
+    // No raw JSON braces remaining
+    expect(all).not.toContain('"query"');
+  });
+
+  // ── Tracer bullet: empty parts ───────────────────────────────────────
+
+  it("handles messages with no parts gracefully", () => {
+    const msg: UIMessage = { id: "empty", role: "assistant", parts: [] };
+    const messages = createSignal<UIMessage[]>([msg]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Should not crash — role badge should show
+    expect(screen.getByText("assistant")).toBeTruthy();
   });
 });

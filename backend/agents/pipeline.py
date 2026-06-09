@@ -1,13 +1,12 @@
-"""LangChain agent pipeline: Researcher -> Critic -> Synthesizer.
+"""LangChain agent pipeline: token-level streaming with AG-UI events.
 
-The pipeline runs a single-agent ``create_agent`` with RAG tools for
-the Researcher role.  Future iterations will layer in the Critic and
-Synthesizer after the initial results are gathered.
+Switched from ``agent.ainvoke()`` (one-shot) to
+``agent.astream(stream_mode="messages")`` for smooth token-level
+streaming.  ``StreamEventHandler`` handles event classification.
 """
 
 from __future__ import annotations
 
-import time
 from uuid import uuid4
 
 from langchain_core.messages import (
@@ -18,18 +17,8 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+from backend.agents.stream_handler import StreamEventHandler
 from backend.corpus_config import CorporaConfig
-
-# ---------------------------------------------------------------------------
-# AG-UI protocol events
-# ---------------------------------------------------------------------------
-from ag_ui.core.events import (
-    RunFinishedEvent,
-    RunStartedEvent,
-    TextMessageContentEvent,
-    TextMessageEndEvent,
-    TextMessageStartEvent,
-)
 
 
 def _convert_dict_messages(messages: list[dict]) -> list[BaseMessage]:
@@ -62,7 +51,7 @@ async def run_pipeline(
     run_id: str = "run-default",
     model=None,
 ):
-    """Run Researcher -> Critic -> Synthesizer.  Yields AG-UI protocol events.
+    """Run the agent pipeline.  Yields token-level AG-UI protocol events.
 
     Parameters
     ----------
@@ -86,8 +75,10 @@ async def run_pipeline(
     Yields
     ------
     Pydantic AG-UI event models (serializable via ``EventEncoder.encode``):
-        RunStartedEvent, TextMessageStartEvent, TextMessageContentEvent,
-        TextMessageEndEvent, RunFinishedEvent, or RunErrorEvent.
+        RunStartedEvent, TextMessageStartEvent/ContentEvent/EndEvent,
+        ReasoningMessageStartEvent/ContentEvent/EndEvent,
+        ToolCallStartEvent/ArgsEvent/EndEvent/ResultEvent,
+        RunFinishedEvent, or RunErrorEvent.
     """
     corpus = corpora_config.get(corpus_slug)
     if corpus is None:
@@ -139,29 +130,35 @@ async def run_pipeline(
     lc_messages = _convert_dict_messages(messages)
 
     message_id = str(uuid4())
-    ts = int(time.time() * 1000)
-
-    yield RunStartedEvent(thread_id=thread_id, run_id=run_id, timestamp=ts)
-
-    result = await agent.ainvoke(
-        {"messages": lc_messages},  # type: ignore[arg-type]
-        config={"recursion_limit": 25},
-    )
-
-    content = ""
-    last_msg = result["messages"][-1] if result["messages"] else None
-    if last_msg and hasattr(last_msg, "content") and last_msg.content:
-        content = last_msg.content
-
-    if content:
-        yield TextMessageStartEvent(message_id=message_id, role="assistant", timestamp=ts)
-        yield TextMessageContentEvent(message_id=message_id, delta=content, timestamp=ts)
-        yield TextMessageEndEvent(message_id=message_id, timestamp=ts)
-
-    yield RunFinishedEvent(
+    handler = StreamEventHandler(
         thread_id=thread_id,
         run_id=run_id,
-        timestamp=ts,
-        finishReason="stop",  # type: ignore[call-arg]
-        usage={"promptTokens": 0, "completionTokens": 0},  # type: ignore[call-arg]
+        message_id=message_id,
     )
+
+    # Emit RUN_STARTED immediately
+    for event in handler.drain():
+        yield event
+
+    try:
+        # ------------------------------------------------------------------
+        # Token-level streaming via astream(stream_mode="messages")
+        # ------------------------------------------------------------------
+        async for chunk, metadata in agent.astream(
+            {"messages": lc_messages},  # type: ignore[arg-type]
+            config={"recursion_limit": 25},
+            stream_mode="messages",
+        ):
+            if isinstance(chunk, BaseMessage):
+                handler.observe(chunk, metadata)  # type: ignore[arg-type]
+            for event in handler.drain():
+                yield event
+
+        # Stream exhausted — close any open blocks and emit RUN_FINISHED
+        for event in handler.finalize():
+            yield event
+
+    except Exception as exc:
+        # Close open blocks and emit RUN_ERROR
+        for event in handler.error(str(exc)):
+            yield event

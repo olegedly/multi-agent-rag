@@ -108,7 +108,7 @@ def create_app(
                     thread_id=thread_id,
                     run_id=run_id,
                 ):
-                    yield encoder.encode(event)
+                    yield encoder.encode(event)  # type: ignore[arg-type]
             except Exception as exc:
                 yield encoder.encode(
                     RunErrorEvent(message=str(exc), timestamp=int(time.time() * 1000))  # type: ignore[call-arg]
