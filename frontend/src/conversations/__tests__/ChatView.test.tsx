@@ -400,6 +400,101 @@ describe("ChatView", () => {
     expect(screen.getByText("streaming")).toBeTruthy();
   });
 
+  // ── Tracer bullet: JSON tool result converted to YAML ───────────────
+
+  it("renders JSON tool result content as YAML", () => {
+    const jsonResult = JSON.stringify({
+      results: [
+        { id: 1, score: 0.95, content: "Chunk about AI" },
+        { id: 2, score: 0.87, content: "Chunk about regulation" },
+      ],
+      error: null,
+    });
+
+    const msg: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "rag_search",
+          arguments: '{"query": "AI"}',
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: jsonResult,
+          state: "complete" as const,
+        },
+      ],
+    };
+    const messages = createSignal<UIMessage[]>([msg]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // YAML output should have unquoted keys and colon-separated values
+    const all = document.body.textContent || "";
+    expect(all).toContain("results:");
+    expect(all).toContain("error: null");
+    expect(all).toContain("score: 0.95");
+    // No JSON double-quoted keys in YAML output
+    expect(all).not.toContain('"results"');
+  });
+
+  // ── Tracer bullet: vertical spacing between tool parts ──────────────
+
+  it("has vertical spacing between adjacent tool calls", () => {
+    const msg: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "rag_search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-call" as const,
+          id: "call-2",
+          name: "rag_read_document",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+      ],
+    };
+    const messages = createSignal<UIMessage[]>([msg]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Both tool names should be visible
+    expect(screen.getByText("rag_search")).toBeTruthy();
+    expect(screen.getByText("rag_read_document")).toBeTruthy();
+  });
+
   // ── Tracer bullet: empty parts ───────────────────────────────────────
 
   it("handles messages with no parts gracefully", () => {
