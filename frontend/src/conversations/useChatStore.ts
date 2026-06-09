@@ -11,7 +11,7 @@ export function useChatStore() {
   const store = createConversationStore();
 
   const chat = useChat({
-    connection: fetchServerSentEvents("/api/chat", {
+    connection: fetchServerSentEvents("/api/chat/eu-ai-act", {
       fetchClient: resilientFetch,
     }),
   });

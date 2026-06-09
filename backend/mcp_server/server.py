@@ -10,21 +10,17 @@ The module-level ``mcp`` instance is created lazily for standalone use.
 
 from __future__ import annotations
 
-from typing import Any
-
 from mcp.server.fastmcp import FastMCP
 
-from backend.config import get_settings
-from backend.db import create_db_sessionmaker
-from backend.embeddings.factory import create_embedding_client
 from backend.embeddings.protocol import EmbeddingClient
-from backend.rag.search import read_document as _read_document
+from backend.rag.deps import make_rag_deps
+from backend.rag.search import AsyncSessionMaker, read_document as _read_document
 from backend.rag.search import search_corpus as _search_corpus
 
 
 def create_mcp_server(
     embedding_client: EmbeddingClient | None = None,
-    sessionmaker: Any | None = None,
+    sessionmaker: AsyncSessionMaker | None = None,
     *,
     host: str = "127.0.0.1",
     port: int = 8000,
@@ -57,18 +53,10 @@ def create_mcp_server(
         port=port,
     )
 
-    # Capture deps in closures — resolved once on first tool call
-    _embedding_client: EmbeddingClient | None = embedding_client
-    _sessionmaker: Any = sessionmaker
-
-    def _ensure_initialised() -> tuple[EmbeddingClient, Any]:
-        nonlocal _embedding_client, _sessionmaker
-        if _embedding_client is None:
-            _embedding_client = create_embedding_client()
-        if _sessionmaker is None:
-            settings = get_settings()
-            _sessionmaker = create_db_sessionmaker(settings.database_url)
-        return _embedding_client, _sessionmaker
+    _ensure_initialised = make_rag_deps(
+        embedding_client=embedding_client,
+        sessionmaker=sessionmaker,
+    )
 
     # ── Tools ─────────────────────────────────────────────────────────
 
