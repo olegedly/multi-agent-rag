@@ -1,4 +1,4 @@
-/.agents
+/.pi
 .env
 /.venv
 __pycache__

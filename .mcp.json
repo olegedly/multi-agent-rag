@@ -5,6 +5,11 @@
       "description": "Semantic search and document retrieval over RAG corpora",
       "lifecycle": "lazy",
       "directTools": true
+    },
+    "langchain": {
+      "url": "https://docs.langchain.com/mcp",
+      "lifecycle": "lazy",
+      "directTools": true
     }
   }
 }
