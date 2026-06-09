@@ -1,5 +1,32 @@
 @import 'tailwindcss';
 
+/* ── Global scrollbar styling ──────────────────────────────────────────────
+   Firefox
+   ──────────────────────────────────────────────────────────────────────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* ── Webkit (Chrome, Safari, Edge) ────────────────────────────────────── */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
 /* Ellipsis loading indicator */
 @keyframes ellipsis-bounce {
   0%, 20% { opacity: 0.2; transform: translateY(0); }
