@@ -11,11 +11,8 @@ from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
-from typing import cast
-
-from backend.db import create_db_sessionmaker
-from backend.embeddings.factory import create_embedding_client
 from backend.embeddings.protocol import EmbeddingClient
+from backend.rag.deps import make_rag_deps
 from backend.rag.search import (
     AsyncSessionMaker,
     read_document as _read_document,
@@ -48,20 +45,10 @@ def create_rag_tools(
         ``[rag_search, rag_read_document]`` — two LangChain tool objects
         ready to pass to ``create_agent(tools=[...])``.
     """
-    _sessionmaker: AsyncSessionMaker | None = sessionmaker
-    _embedding_client: EmbeddingClient | None = embedding_client
-
-    def _ensure_initialised() -> tuple[EmbeddingClient, AsyncSessionMaker]:
-        nonlocal _embedding_client, _sessionmaker
-        if _embedding_client is None:
-            _embedding_client = create_embedding_client()
-        if _sessionmaker is None:
-            from backend.config import get_settings
-
-            settings = get_settings()
-
-            _sessionmaker = cast(AsyncSessionMaker, create_db_sessionmaker(settings.database_url))
-        return _embedding_client, _sessionmaker
+    _ensure_initialised = make_rag_deps(
+        embedding_client=embedding_client,
+        sessionmaker=sessionmaker,
+    )
 
     @tool
     async def rag_search(query: str, top_k: int = 5) -> dict[str, Any]:

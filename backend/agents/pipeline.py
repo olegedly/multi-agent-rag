@@ -57,7 +57,7 @@ async def run_pipeline(
     messages: list[dict],
     corpus_slug: str,
     corpora_config: CorporaConfig,
-    settings=None,
+    settings,
     thread_id: str = "th-default",
     run_id: str = "run-default",
 ):
@@ -71,8 +71,8 @@ async def run_pipeline(
         URL slug for the corpus (e.g. ``"eu-ai-act"``).
     corpora_config : CorporaConfig
         Resolves the slug to a corpus UUID and metadata.
-    settings : Settings, optional
-        App settings for LLM config.  Created lazily if ``None``.
+    settings : Settings
+        App settings for LLM config.
     thread_id : str
         Thread identifier from the frontend.
     run_id : str
@@ -87,11 +87,6 @@ async def run_pipeline(
     corpus = corpora_config.get(corpus_slug)
     if corpus is None:
         return
-
-    if settings is None:
-        from backend.config import get_settings
-
-        settings = get_settings()
 
     from backend.agents.langchain_tools import create_rag_tools
     from backend.middleware import JsonFileBudget, TokenBudgetCallback
