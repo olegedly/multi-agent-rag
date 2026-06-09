@@ -171,7 +171,7 @@ export function ChatView(props: ChatViewProps) {
               }
             }}
             placeholder="Type your message..."
-            class="flex-1 resize-none rounded-xl px-4 py-2 text-sm bg-(--bg-chat-input) text-(--text-primary) border border-(--border) focus:outline-none focus:border-(--accent) transition-colors placeholder:text-(--text-secondary) disabled:opacity-50 max-h-45 overflow-y-auto"
+            class="flex-1 resize-none rounded-xl px-4 py-2 text-sm bg-(--bg-chat-input) text-(--text-primary) border border-(--border) focus:outline-none focus:border-(--accent) transition-colors placeholder:text-(--text-secondary) disabled:opacity-50 max-h-45 overflow-y-hidden"
             rows={1}
           />
           <Show
@@ -273,7 +273,7 @@ const TOOL_CALL_LABELS: Record<string, string> = {
 
 function ToolCallPartRenderer(props: { part: ToolCallPart }) {
   return (
-    <div class="mb-2 flex items-start gap-2 text-xs">
+    <div class="mt-4 mb-2 flex items-start gap-2 text-xs">
       {/* Tool icon */}
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -347,7 +347,10 @@ function jsonToYaml(value: unknown, indent: number = 0): string {
       return `|\n${pad}  ${lines.join(`\n${pad}  `)}`;
     }
     // Unquoted scalar if it's a simple word; otherwise quoted
-    if (/^[a-zA-Z0-9_/.\- ]+$/.test(clean) && !/^[\-:?\[\]{}#,|>!@&*'"%`]/.test(clean)) {
+    if (
+      /^[a-zA-Z0-9_/.\- ]+$/.test(clean) &&
+      !/^[\-:?\[\]{}#,|>!@&*'"%`]/.test(clean)
+    ) {
       return clean;
     }
     return `"${clean}"`;
@@ -363,7 +366,13 @@ function jsonToYaml(value: unknown, indent: number = 0): string {
       if (typeof item === "object" && item !== null) {
         const sub = jsonToYaml(item, indent + 1);
         const lines = sub.split("\n");
-        return `${pad}- ${lines[0]}` + lines.slice(1).map((l) => `\n${pad}  ${l}`).join("");
+        return (
+          `${pad}- ${lines[0]}` +
+          lines
+            .slice(1)
+            .map((l) => `\n${pad}  ${l}`)
+            .join("")
+        );
       }
       return `${pad}- ${jsonToYaml(item, indent + 1)}`;
     });
@@ -410,7 +419,7 @@ function ToolResultPartRenderer(props: { part: ToolResultPart }) {
         />
       </svg>
       <div class="flex-1 min-w-0">
-        <div class="text-xs text-(--text-secondary) font-mono whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
+        <div class="text-xs text-(--text-secondary) font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
           {formatToolResult(props.part.content)}
         </div>
       </div>
