@@ -60,6 +60,7 @@ async def run_pipeline(
     settings,
     thread_id: str = "th-default",
     run_id: str = "run-default",
+    model=None,
 ):
     """Run Researcher -> Critic -> Synthesizer.  Yields AG-UI protocol events.
 
@@ -77,6 +78,10 @@ async def run_pipeline(
         Thread identifier from the frontend.
     run_id : str
         Run identifier from the frontend.
+    model : BaseChatModel, optional
+        Pre-configured model instance.  When provided, ``ChatOpenAI``
+        construction is skipped — useful for tests and for callers that
+        want to wire their own model instance.
 
     Yields
     ------
@@ -91,7 +96,6 @@ async def run_pipeline(
     from backend.agents.langchain_tools import create_rag_tools
     from backend.middleware import JsonFileBudget, TokenBudgetCallback
     from langchain.agents import create_agent
-    from langchain_openai import ChatOpenAI
 
     tools = create_rag_tools(corpus_id=corpus.id)
 
@@ -103,16 +107,19 @@ async def run_pipeline(
             daily_limit=settings.demo_daily_budget_tokens,
         )
 
-    # fmt: off
-    model = ChatOpenAI(
-        model=settings.llm_model,
-        openai_api_key=settings.llm_api_key,  # type: ignore[call-arg]
-        openai_api_base=settings.llm_base_url,  # type: ignore[call-arg]
-        max_tokens=settings.llm_max_tokens,  # type: ignore[call-arg]
-        temperature=0,
-        callbacks=[TokenBudgetCallback(budget_file)],
-    )
-    # fmt: on
+    if model is None:
+        from langchain_openai import ChatOpenAI
+
+        # fmt: off
+        model = ChatOpenAI(
+            model=settings.llm_model,
+            openai_api_key=settings.llm_api_key,  # type: ignore[call-arg]
+            openai_api_base=settings.llm_base_url,  # type: ignore[call-arg]
+            max_tokens=settings.llm_max_tokens,  # type: ignore[call-arg]
+            temperature=0,
+            callbacks=[TokenBudgetCallback(budget_file)],
+        )
+        # fmt: on
 
     agent = create_agent(
         model=model,
