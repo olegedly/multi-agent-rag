@@ -453,6 +453,58 @@ describe("ChatView", () => {
     expect(all).not.toContain('"results"');
   });
 
+  // ── Tracer bullet: literal \n in tool results converted to real newlines ──
+
+  it("converts literal \\n sequences to real newlines in YAML output", () => {
+    // Simulate backend JSON with literal \n in string values
+    const jsonResult = JSON.stringify({
+      content: "Line one\\nLine two\\nLine three",
+    });
+
+    const msg: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "rag_search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: jsonResult,
+          state: "complete" as const,
+        },
+      ],
+    };
+    const messages = createSignal<UIMessage[]>([msg]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    const all = document.body.textContent || "";
+    // The YAML block scalar pipe symbol indicates multi-line
+    expect(all).toContain("content: |");
+    // Each line should appear on its own line, not as one with literal \n
+    expect(all).toContain("Line one");
+    expect(all).toContain("Line two");
+    expect(all).toContain("Line three");
+    // No literal \n should remain
+    expect(all).not.toContain("Line one\\n");
+  });
+
   // ── Tracer bullet: vertical spacing between tool parts ──────────────
 
   it("has vertical spacing between adjacent tool calls", () => {

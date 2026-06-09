@@ -273,7 +273,7 @@ const TOOL_CALL_LABELS: Record<string, string> = {
 
 function ToolCallPartRenderer(props: { part: ToolCallPart }) {
   return (
-    <div class="my-2 flex items-start gap-2 text-xs">
+    <div class="mb-2 flex items-start gap-2 text-xs">
       {/* Tool icon */}
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -339,11 +339,18 @@ function jsonToYaml(value: unknown, indent: number = 0): string {
   if (value === null || value === undefined) return "null";
 
   if (typeof value === "string") {
-    // Unquoted scalar if it's a simple word; otherwise quoted
-    if (/^[a-zA-Z0-9_/.\- ]+$/.test(value) && !/^[\-:?\[\]{}#,|>!@&*'"%`]/.test(value)) {
-      return value;
+    // RAG content often contains literal \n sequences — treat as newlines
+    const clean = value.replace(/\\n/g, "\n");
+    // Multi-line block scalar
+    if (clean.includes("\n")) {
+      const lines = clean.split("\n");
+      return `|\n${pad}  ${lines.join(`\n${pad}  `)}`;
     }
-    return JSON.stringify(value);
+    // Unquoted scalar if it's a simple word; otherwise quoted
+    if (/^[a-zA-Z0-9_/.\- ]+$/.test(clean) && !/^[\-:?\[\]{}#,|>!@&*'"%`]/.test(clean)) {
+      return clean;
+    }
+    return `"${clean}"`;
   }
 
   if (typeof value === "number" || typeof value === "boolean") {
@@ -388,7 +395,7 @@ function jsonToYaml(value: unknown, indent: number = 0): string {
 
 function ToolResultPartRenderer(props: { part: ToolResultPart }) {
   return (
-    <div class="my-2 flex items-start gap-2">
+    <div class="mb-2 flex items-start gap-2">
       {/* Result icon */}
       <svg
         xmlns="http://www.w3.org/2000/svg"
