@@ -9,12 +9,11 @@ class TestSettingsDefaults:
         assert s.app_name == "multi-agent-rag"
 
     def test_llm_defaults_empty(self, monkeypatch) -> None:
-        monkeypatch.delenv("LLM_PROVIDER_TYPE", raising=False)
         monkeypatch.delenv("LLM_MODEL", raising=False)
         monkeypatch.delenv("LLM_API_KEY", raising=False)
         monkeypatch.delenv("LLM_BASE_URL", raising=False)
+        monkeypatch.delenv("LLM_MAX_TOKENS", raising=False)
         s = Settings(_env_file=None)  # type: ignore[call-arg]
-        assert s.llm_provider_type == ""
         assert s.llm_model == ""
         assert s.llm_api_key == ""
         assert s.llm_base_url == ""
@@ -40,9 +39,8 @@ class TestSettingsEnvOverride:
         assert s.database_url == expected
 
     def test_overrides_from_kwargs(self) -> None:
-        s = Settings(llm_provider_type="anthropic", llm_model="claude-3")
-        assert s.llm_provider_type == "anthropic"
-        assert s.llm_model == "claude-3"
+        s = Settings(llm_model="gpt-4o")
+        assert s.llm_model == "gpt-4o"
 
 
 class TestDemoBudgetDefaults:

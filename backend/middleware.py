@@ -4,6 +4,10 @@ Three-layer defense:
   1. Caddy IP rate limiting (frontend/Caddyfile) — outermost
   2. Daily token budget (ASGI middleware) — checks /data/demo-budget.json
   3. Query validation (FastAPI middleware) — validates user message length & count
+
+Also provides :class:`TokenBudgetCallback` — a LangChain callback that wires
+output token counts from ``ChatOpenAI`` into the budget store on each LLM
+invocation.
 """
 
 from __future__ import annotations
@@ -15,6 +19,8 @@ from datetime import date, datetime, timezone
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.outputs import LLMResult
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
@@ -95,6 +101,32 @@ class JsonFileBudget:
 def today_str() -> str:
     """Return today's date as ``YYYY-MM-DD`` (UTC)."""
     return date.fromtimestamp(datetime.now(timezone.utc).timestamp()).isoformat()
+
+
+# ── LangChain Token Budget Callback ──────────────────────────────────────────
+
+
+class TokenBudgetCallback(BaseCallbackHandler):
+    """LangChain callback that deducts output tokens from the daily budget.
+
+    Wire into ``ChatOpenAI(callbacks=[TokenBudgetCallback(budget_file)])``.
+    Fires after every successful LLM invocation, reading output token count
+    from ``LLMResult.llm_output["token_usage"]["completion_tokens"]``.
+
+    Does nothing when *budget_file* is ``None`` (budget disabled).
+    """
+
+    def __init__(self, budget_file: BudgetStore | None = None) -> None:
+        self.budget_file = budget_file
+
+    def on_llm_end(self, response: LLMResult, **kwargs) -> None:
+        if self.budget_file is None:
+            return
+        llm_output = response.llm_output or {}
+        token_usage = llm_output.get("token_usage") or {}
+        output_tokens = token_usage.get("completion_tokens", 0)
+        if output_tokens:
+            self.budget_file.add_tokens(output_tokens)
 
 
 # ── Chat Guard Middleware ─────────────────────────────────────────────────────

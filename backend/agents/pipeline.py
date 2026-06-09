@@ -94,10 +94,19 @@ async def run_pipeline(
         settings = get_settings()
 
     from backend.agents.langchain_tools import create_rag_tools
+    from backend.middleware import JsonFileBudget, TokenBudgetCallback
     from langchain.agents import create_agent
     from langchain_openai import ChatOpenAI
 
     tools = create_rag_tools(corpus_id=corpus.id)
+
+    # Wire daily token budget
+    budget_file = None
+    if not settings.demo_disable_budget:
+        budget_file = JsonFileBudget(
+            path=settings.demo_budget_file,
+            daily_limit=settings.demo_daily_budget_tokens,
+        )
 
     # fmt: off
     model = ChatOpenAI(
@@ -106,6 +115,7 @@ async def run_pipeline(
         openai_api_base=settings.llm_base_url,  # type: ignore[call-arg]
         max_tokens=settings.llm_max_tokens,  # type: ignore[call-arg]
         temperature=0,
+        callbacks=[TokenBudgetCallback(budget_file)],
     )
     # fmt: on
 
