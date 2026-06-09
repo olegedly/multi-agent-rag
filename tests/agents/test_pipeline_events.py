@@ -17,6 +17,7 @@ from ag_ui.core.events import (
     TextMessageStartEvent,
 )
 from langchain_core.messages import AIMessage
+from langchain_core.language_models.chat_models import BaseChatModel
 
 from backend.corpus_config import CorporaConfig
 
@@ -35,27 +36,35 @@ def corpora_config():
     ])
 
 
+@pytest.fixture
+def mock_model():
+    """A fake BaseChatModel that sidesteps real API credentials."""
+    return AsyncMock(spec=BaseChatModel)
+
+
 # ── Tracer bullet: run_pipeline yields correct AG-UI events ─────────────────
+
+
+_FAKE_RESULT = {
+    "messages": [AIMessage(content="Hello from the agent")],
+}
+
+
+@pytest.fixture
+def mock_agent():
+    """Mock create_agent so no real agent loop runs."""
+    mock_agent = AsyncMock()
+    mock_agent.ainvoke.return_value = _FAKE_RESULT
+    with patch("langchain.agents.create_agent", return_value=mock_agent):
+        yield
 
 
 class TestPipelineEvents:
     """run_pipeline() yields AG-UI protocol events in correct order."""
 
-    @pytest.fixture
-    def mock_agent(self):
-        """Mock create_agent and ChatOpenAI so no real LLM call happens."""
-        fake_result = {
-            "messages": [AIMessage(content="Hello from the agent")],
-        }
-        mock_agent = AsyncMock()
-        mock_agent.ainvoke.return_value = fake_result
-
-        with patch("langchain.agents.create_agent", return_value=mock_agent):
-            yield
-
-    async def test_emits_run_started_first(self, corpora_config, mock_agent):
+    async def test_emits_run_started_first(self, corpora_config, mock_agent, mock_model):
         """First event must be RunStartedEvent with thread/run IDs."""
-        events = await collect_pipeline_events(corpora_config)
+        events = await collect_pipeline_events(corpora_config, model=mock_model)
         assert len(events) >= 1
         first = events[0]
         assert isinstance(first, RunStartedEvent)
@@ -63,9 +72,9 @@ class TestPipelineEvents:
         assert first.run_id == "run-default"
         assert first.timestamp is not None
 
-    async def test_emits_text_message_events(self, corpora_config, mock_agent):
+    async def test_emits_text_message_events(self, corpora_config, mock_agent, mock_model):
         """Content messages yield TEXT_MESSAGE_START/CONTENT/END."""
-        events = await collect_pipeline_events(corpora_config)
+        events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         text_events = [
             e
@@ -85,9 +94,9 @@ class TestPipelineEvents:
         ends = [e for e in text_events if isinstance(e, TextMessageEndEvent)]
         assert len(ends) == 1
 
-    async def test_emits_run_finished_last(self, corpora_config, mock_agent):
+    async def test_emits_run_finished_last(self, corpora_config, mock_agent, mock_model):
         """Last event must be RunFinishedEvent."""
-        events = await collect_pipeline_events(corpora_config)
+        events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         last = events[-1]
         assert isinstance(last, RunFinishedEvent)
@@ -95,9 +104,9 @@ class TestPipelineEvents:
         assert last.run_id == "run-default"
         assert last.finishReason == "stop"  # type: ignore[attr-defined]
 
-    async def test_full_event_sequence(self, corpora_config, mock_agent):
+    async def test_full_event_sequence(self, corpora_config, mock_agent, mock_model):
         """Verify complete event type sequence."""
-        events = await collect_pipeline_events(corpora_config)
+        events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         types = [type(e).__name__ for e in events]
         assert types == [
@@ -108,7 +117,7 @@ class TestPipelineEvents:
             "RunFinishedEvent",
         ]
 
-    async def test_empty_content_skips_text_events(self, corpora_config):
+    async def test_empty_content_skips_text_events(self, corpora_config, mock_model):
         """When agent returns no content, no TEXT_MESSAGE events are emitted."""
         fake_result = {
             "messages": [AIMessage(content="")],
@@ -117,7 +126,7 @@ class TestPipelineEvents:
         mock_agent.ainvoke.return_value = fake_result
 
         with patch("langchain.agents.create_agent", return_value=mock_agent):
-            events = await collect_pipeline_events(corpora_config)
+            events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         types = [type(e).__name__ for e in events]
         assert "TextMessageStartEvent" not in types
@@ -137,6 +146,7 @@ class TestPipelineEvents:
 async def collect_pipeline_events(
     corpora_config: CorporaConfig,
     slug: str = "eu-ai-act",
+    model=None,
 ) -> list[object]:
     """Collect pipeline events into a list."""
     from backend.agents.pipeline import run_pipeline
@@ -152,6 +162,7 @@ async def collect_pipeline_events(
         settings=settings,
         thread_id="th-default",
         run_id="run-default",
+        model=model,
     ):
         events.append(event)
     return events
