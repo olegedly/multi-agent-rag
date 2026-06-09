@@ -11,9 +11,12 @@ lazily on first tool call (matching the ``create_mcp_server`` pattern).
 
 from __future__ import annotations
 
+import logging
 from typing import Any, cast
 
 from google.adk.tools.tool_context import ToolContext
+
+log = logging.getLogger(__name__)
 
 from backend.db import create_db_sessionmaker
 from backend.embeddings.factory import create_embedding_client
@@ -86,7 +89,11 @@ def make_rag_tools(
         """
         corpus_id = None
         if tool_context is not None:
+            log.warning(f"rag_search: tool_context.state = {tool_context.state!r}")
             corpus_id = tool_context.state.get("corpusId")
+        else:
+            log.warning("rag_search: tool_context is None!")
+        log.warning(f"rag_search: corpus_id = {corpus_id!r}")
         if not corpus_id:
             return {
                 "results": [],

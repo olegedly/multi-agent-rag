@@ -8,10 +8,25 @@ from typing import AsyncIterable
 
 @dataclass
 class Message:
-    """A single message in a conversation."""
+    """A single message in a conversation.
+
+    For assistant messages with tool calls, *tool_calls* carries the
+    opaque provider-format dicts (e.g. OpenAI ``{id, type, function}``
+    shape).  For tool-role messages, *tool_call_id* links back to the
+    call that produced the result.
+    """
 
     role: str  # "user" | "assistant" | "system" | "tool"
     content: str
+
+    # Assistant messages only: list of tool call dicts in the provider's
+    # wire format (e.g. OpenAI ``{"id": ..., "type": "function",
+    # "function": {"name": ..., "arguments": ...}}``).
+    tool_calls: list[dict] | None = None
+
+    # Tool-role messages only: the ``id`` of the tool call whose result
+    # this message carries.
+    tool_call_id: str | None = None
 
 
 @dataclass

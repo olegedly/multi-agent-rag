@@ -78,15 +78,23 @@ class TestToProtocolMessages:
         contents = [types.Content(role="model", parts=[types.Part(function_call=fn)])]
         messages = _to_protocol_messages(contents)
         assert len(messages) == 1
-        assert '[function_call: search({"q": "test"})]' in messages[0].content
+        assert messages[0].role == "assistant"
+        assert messages[0].content == ""
+        assert messages[0].tool_calls is not None
+        assert len(messages[0].tool_calls) == 1
+        assert messages[0].tool_calls[0]["function"]["name"] == "search"
+        assert messages[0].tool_calls[0]["function"]["arguments"] == '{"q": "test"}'
 
-    def test_converts_function_response_part(self) -> None:
-        fn_resp = types.FunctionResponse(name="search", response={"result": "data"})
+    def test_converts_function_response_part_on_tool_role(self) -> None:
+        fn_resp = types.FunctionResponse(id="call_1", name="search", response={"result": "data"})
         contents = [
-            types.Content(role="model", parts=[types.Part(function_response=fn_resp)])
+            types.Content(role="tool", parts=[types.Part(function_response=fn_resp)])
         ]
         messages = _to_protocol_messages(contents)
-        assert '[function_result: {"result": "data"}]' in messages[0].content
+        assert len(messages) == 1
+        assert messages[0].role == "tool"
+        assert messages[0].tool_call_id == "call_1"
+        assert "result" in messages[0].content
 
     def test_skips_empty_parts(self) -> None:
         contents = [types.Content(role="user", parts=[])]

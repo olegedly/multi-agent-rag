@@ -1,6 +1,7 @@
 """Anthropic messages-format LLM client."""
 
 import json
+import json
 from typing import AsyncIterable
 
 from backend.llm.protocol import LLMClient, LLMResponse, Message, StreamEvent, ToolCall, ToolDef, Usage
@@ -101,13 +102,37 @@ class AnthropicClient(LLMClient):
         tools: list[ToolDef] | None,
         stream: bool,
     ) -> dict:
+        msgs: list[dict] = []
+        for msg in messages:
+            if msg.role == "system":
+                continue
+            entry: dict = {"role": msg.role}
+            if msg.role == "assistant" and msg.tool_calls:
+                # Anthropic format: tool_use content blocks
+                content: list[dict] = []
+                if msg.content:
+                    content.append({"type": "text", "text": msg.content})
+                for tc in msg.tool_calls:
+                    content.append({
+                        "type": "tool_use",
+                        "id": tc["id"],
+                        "name": tc["function"]["name"],
+                        "input": json.loads(tc["function"]["arguments"]),
+                    })
+                entry["content"] = content
+            elif msg.role == "tool" and msg.tool_call_id:
+                entry["content"] = [{
+                    "type": "tool_result",
+                    "tool_use_id": msg.tool_call_id,
+                    "content": msg.content,
+                }]
+            else:
+                entry["content"] = msg.content
+            msgs.append(entry)
+
         body: dict = {
             "model": self.model,
-            "messages": [
-                {"role": msg.role, "content": msg.content}
-                for msg in messages
-                if msg.role != "system"
-            ],
+            "messages": msgs,
             "max_tokens": self.max_tokens,
             "stream": stream,
         }

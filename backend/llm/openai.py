@@ -120,7 +120,12 @@ class OpenAIClient(LLMClient):
             msgs.append({"role": "system", "content": system})
         for msg in messages:
             if msg.role != "system":
-                msgs.append({"role": msg.role, "content": msg.content})
+                entry: dict = {"role": msg.role, "content": msg.content}
+                if msg.tool_calls:
+                    entry["tool_calls"] = msg.tool_calls
+                if msg.tool_call_id:
+                    entry["tool_call_id"] = msg.tool_call_id
+                msgs.append(entry)
         body: dict = {
             "model": self.model,
             "messages": msgs,

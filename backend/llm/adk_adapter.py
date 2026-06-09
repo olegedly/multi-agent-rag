@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import AsyncGenerator
 
+import json
+
 from google.adk.models.base_llm import BaseLlm
 from google.adk.models.llm_request import LlmRequest
 from google.adk.models.llm_response import LlmResponse
@@ -27,40 +29,45 @@ def _to_protocol_messages(
 ) -> list[Message]:
     """Convert ADK Content list to our protocol Message list.
 
-    ``function_call`` parts become assistant messages with the call
-    serialised.  ``function_response`` parts become tool-role messages.
+    ``function_call`` parts become structured tool_calls dicts in
+    OpenAI wire format.  ``function_response`` parts become tool-role
+    messages with ``tool_call_id``.
     """
     messages: list[Message] = []
     for content in contents:
         if content.role in ("model", "assistant"):
             text = ""
+            tool_calls: list[dict] | None = None
             for part in content.parts or []:
                 if part.text:
                     text += part.text
                 elif part.function_call:
-                    import json
-
-                    text += (
-                        f"\n[function_call: "
-                        f"{part.function_call.name}"
-                        f"({json.dumps(part.function_call.args)})]"
-                    )
+                    fc = part.function_call
+                    tc_dict = {
+                        "id": fc.id or f"call_{id(fc):x}",
+                        "type": "function",
+                        "function": {
+                            "name": fc.name,
+                            "arguments": json.dumps(fc.args),
+                        },
+                    }
+                    if tool_calls is None:
+                        tool_calls = []
+                    tool_calls.append(tc_dict)
                 elif part.function_response:
-                    import json
-
-                    text += (
-                        f"\n[function_result: "
-                        f"{json.dumps(part.function_response.response)}]"
-                    )
-            if text:
-                messages.append(Message(role="assistant", content=text))
+                    text += f"\n[function_result: {json.dumps(part.function_response.response)}]"
+            if text or tool_calls:
+                messages.append(
+                    Message(role="assistant", content=text or "", tool_calls=tool_calls)
+                )
         elif content.role == "tool":
             for part in content.parts or []:
                 if part.function_response:
-                    import json
-
                     text = json.dumps(part.function_response.response)
-                    messages.append(Message(role="tool", content=text))
+                    tc_id = part.function_response.id or part.function_response.name or ""
+                    messages.append(
+                        Message(role="tool", content=text, tool_call_id=tc_id)
+                    )
                 elif part.text:
                     messages.append(Message(role="tool", content=part.text))
         else:
