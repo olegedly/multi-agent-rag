@@ -61,6 +61,10 @@ class StreamEventHandler:
         self._text_open = False
         self._reasoning_open = False
         self._open_tool_ids: set[str] = set()
+        # ToolCallChunks that follow a TOOL_CALL_START often carry only
+        # `args` with `id=None`/`name=None` (LangGraph merges by index).
+        # Track the last known id per index to fill in the gap.
+        self._last_tool_call_id_by_index: dict[int, str] = {}
 
         # Draining — run_started is buffered on construction
         self._pending: list[BaseEvent] = [
@@ -161,10 +165,20 @@ class StreamEventHandler:
         # Tool call chunks
         if chunk.tool_call_chunks:
             for tcc in chunk.tool_call_chunks:
-                self._ensure_tool_open(tcc)
+                tid = tcc.get("id")
+                idx = tcc.get("index")
+                # LangGraph merges tool_call_chunks by index; subsequent
+                # merged chunks have id=None but still carry args. Fall
+                # back to the last known id for this index.
+                if not tid and idx is not None and idx in self._last_tool_call_id_by_index:
+                    tid = self._last_tool_call_id_by_index[idx]
+                if tid and idx is not None:
+                    self._last_tool_call_id_by_index[idx] = tid
+
+                self._ensure_tool_open(tcc, resolved_id=tid)
                 self._pending.append(
                     ToolCallArgsEvent(
-                        tool_call_id=tcc["id"] or "",
+                        tool_call_id=tid or "",
                         delta=tcc["args"] or "",
                     ),
                 )
@@ -235,9 +249,9 @@ class StreamEventHandler:
                 ),
             )
 
-    def _ensure_tool_open(self, tcc: ToolCallChunk) -> None:
+    def _ensure_tool_open(self, tcc: ToolCallChunk, resolved_id: str | None = None) -> None:
         """Emit ``TOOL_CALL_START`` for a tool if not yet tracked."""
-        tid = tcc.get("id") or ""
+        tid = resolved_id or tcc.get("id") or ""
         if tid and tid not in self._open_tool_ids:
             self._open_tool_ids.add(tid)
             self._pending.append(

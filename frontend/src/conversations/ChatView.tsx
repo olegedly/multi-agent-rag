@@ -306,11 +306,9 @@ function ToolCallPartRenderer(props: { part: ToolCallPart }) {
             {TOOL_CALL_LABELS[props.part.state] ?? props.part.state}
           </span>
         </div>
-        <Show when={props.part.arguments}>
-          <div class="mt-0.5 text-(--text-secondary) font-mono text-[11px] truncate">
-            {props.part.arguments}
-          </div>
-        </Show>
+        <div class="mt-0.5 text-(--text-secondary) font-mono text-[11px] whitespace-pre-wrap max-h-24 overflow-y-auto">
+          {props.part.arguments}
+        </div>
       </div>
     </div>
   );

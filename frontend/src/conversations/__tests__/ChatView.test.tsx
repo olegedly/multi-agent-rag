@@ -547,6 +547,41 @@ describe("ChatView", () => {
     expect(screen.getByText("rag_read_document")).toBeTruthy();
   });
 
+  // ── Tracer bullet: tool call arguments are visible, not truncated ──────
+
+  it("shows tool call arguments (not truncated)", () => {
+    const args = '{"query": "EU AI Act", "top_k": 5}';
+    const msg: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "rag_search",
+          arguments: args,
+          state: "complete" as const,
+        },
+      ],
+    };
+    const messages = createSignal<UIMessage[]>([msg]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    const all = document.body.textContent || "";
+    expect(all).toContain(args);
+  });
+
   // ── Tracer bullet: empty parts ───────────────────────────────────────
 
   it("handles messages with no parts gracefully", () => {

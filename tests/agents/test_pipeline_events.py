@@ -140,10 +140,12 @@ def mock_astream_tools():
                 {"name": "rag_search", "args": '{"query":', "id": "call-1", "index": 0},
             ],
         ), {"langgraph_node": "agent"}
+        # LangGraph merges tool_call_chunks by index — subsequent chunk
+        # has id=None / name=None but carries the args continuation
         yield AIMessageChunk(
             content="",
             tool_call_chunks=[
-                {"name": None, "args": '"EU AI Act"}', "id": "call-1", "index": 0},
+                {"name": None, "args": '"EU AI Act"}', "id": None, "index": 0},
             ],
         ), {"langgraph_node": "agent"}
         # Tool returns result
@@ -175,6 +177,8 @@ class TestPipelineToolEvents:
 
         tool_args = [e for e in events if isinstance(e, ToolCallArgsEvent)]
         assert len(tool_args) == 2
+        # Even the merged chunk (id=None on wire) must have resolved id
+        assert all(a.tool_call_id == "call-1" for a in tool_args)
 
     async def test_emits_tool_result_events(self, corpora_config, mock_astream_tools, mock_model):
         """Tool result yields TOOL_CALL_END + TOOL_CALL_RESULT."""

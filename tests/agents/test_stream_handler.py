@@ -219,6 +219,34 @@ class TestToolCalls:
         assert starts[0].tool_call_id == "call-1"
         assert starts[1].tool_call_id == "call-2"
 
+    def test_merged_chunk_without_id_resolves_via_index(self, handler):
+        """Chunks with id=None but index+args resolve via last known id."""
+        # First chunk establishes id for index 0
+        chunk1 = AIMessageChunk(
+            content="",
+            tool_call_chunks=[
+                {"name": "rag_search", "args": "", "id": "call-m1", "index": 0},
+            ],
+        )
+        handler.observe(chunk1, {"langgraph_node": "agent"})
+        handler.drain()  # START + (empty) ARGS
+
+        # LangGraph merges by index — subsequent chunk has id=None
+        chunk2 = AIMessageChunk(
+            content="",
+            tool_call_chunks=[
+                {"name": None, "args": '{"query":"test"}', "id": None, "index": 0},
+            ],
+        )
+        handler.observe(chunk2, {"langgraph_node": "agent"})
+        events = handler.drain()
+
+        # Should emit ARGS with the resolved id, not empty string
+        assert len(events) == 1
+        assert isinstance(events[0], ToolCallArgsEvent)
+        assert events[0].tool_call_id == "call-m1"
+        assert events[0].delta == '{"query":"test"}'
+
 
 # ── Tracer bullet 4: reasoning content ────────────────────────────────────
 
