@@ -11,6 +11,8 @@ from typing import Any
 
 from langchain_core.tools import BaseTool, tool
 
+from typing import cast
+
 from backend.db import create_db_sessionmaker
 from backend.embeddings.factory import create_embedding_client
 from backend.embeddings.protocol import EmbeddingClient
@@ -57,9 +59,8 @@ def create_rag_tools(
             from backend.config import get_settings
 
             settings = get_settings()
-            from sqlalchemy.ext.asyncio import async_sessionmaker
 
-            _sessionmaker = create_db_sessionmaker(settings.database_url)
+            _sessionmaker = cast(AsyncSessionMaker, create_db_sessionmaker(settings.database_url))
         return _embedding_client, _sessionmaker
 
     @tool

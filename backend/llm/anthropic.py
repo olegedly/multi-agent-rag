@@ -1,7 +1,6 @@
 """Anthropic messages-format LLM client."""
 
 import json
-import json
 from typing import AsyncIterable
 
 from backend.llm.protocol import LLMClient, LLMResponse, Message, StreamEvent, ToolCall, ToolDef, Usage

@@ -9,10 +9,36 @@ from __future__ import annotations
 
 from typing import AsyncIterable
 
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+
 from backend.corpus_config import CorporaConfig
-from backend.embeddings.factory import create_embedding_client
-from backend.rag.search import AsyncSessionMaker
-from backend.db import create_db_sessionmaker
+
+
+def _convert_dict_messages(messages: list[dict]) -> list[BaseMessage]:
+    """Convert OpenAI chat-format dicts to LangChain BaseMessage objects."""
+    lc_messages: list[BaseMessage] = []
+    for msg in messages:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        if role == "user":
+            lc_messages.append(HumanMessage(content=content))
+        elif role == "assistant":
+            lc_messages.append(AIMessage(content=content))
+        elif role == "system":
+            lc_messages.append(SystemMessage(content=content))
+        elif role == "tool":
+            lc_messages.append(
+                ToolMessage(content=content, tool_call_id=msg.get("tool_call_id", ""))
+            )
+        else:
+            lc_messages.append(HumanMessage(content=content))
+    return lc_messages
 
 
 async def run_pipeline(
@@ -54,13 +80,15 @@ async def run_pipeline(
 
     tools = create_rag_tools(corpus_id=corpus.id)
 
+    # fmt: off
     model = ChatOpenAI(
         model=settings.llm_model,
-        openai_api_key=settings.llm_api_key,
-        openai_api_base=settings.llm_base_url,
-        max_tokens=settings.llm_max_tokens,
+        openai_api_key=settings.llm_api_key,  # type: ignore[call-arg]
+        openai_api_base=settings.llm_base_url,  # type: ignore[call-arg]
+        max_tokens=settings.llm_max_tokens,  # type: ignore[call-arg]
         temperature=0,
     )
+    # fmt: on
 
     agent = create_agent(
         model=model,
@@ -77,8 +105,10 @@ async def run_pipeline(
         ),
     )
 
+    lc_messages = _convert_dict_messages(messages)
+
     result = await agent.ainvoke(
-        {"messages": messages},
+        {"messages": lc_messages},  # type: ignore[arg-type]
         config={"recursion_limit": 25},
     )
 
