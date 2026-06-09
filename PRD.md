@@ -9,12 +9,12 @@ Building such a system requires mastery of the modern AI engineering stack:
 1. Production FastAPI backends with Pydantic
 2. RAG with PostgreSQL + pgvector
 3. MCP servers as tool interfaces
-4. Multi-agent orchestration with Google ADK
+4. Multi-agent orchestration with LangChain
 5. Real-time streaming agent output to a web UI
 6. Containerized, deployable full-stack applications
 7. Route-based, corpus-scoped retrieval across multiple curated knowledge bases
 
-This project demonstrates all of the above in a single, deployable system: a multi-agent research assistant that serves grounded, cited answers from multiple curated public knowledge bases — each a first-class destination with its own route, its own corpus, and its own conversations.
+This project demonstrates all of the above in a single, deployable system: a multi-agent research assistant that serves grounded, cited answers from multiple curated public knowledge bases — each a first-class destination with its own route, its own corpus, and its own conversations via a LangChain pipeline streamed over SSE.
 
 ## Solution
 
@@ -23,11 +23,11 @@ An interactive multi-agent research system where:
 - A landing page introduces the system and lists the available curated knowledge bases
 - Selecting a knowledge base navigates to a dedicated route for that corpus
 - The user submits a research question within the context of that corpus
-- Three specialist AI agents (Researcher, Critic, Synthesizer) collaborate via ADK to answer it
+- Three specialist agents (Researcher, Critic, Synthesizer) collaborate via a LangChain pipeline to answer it
 - Agents search only the active corpus in a pgvector knowledge base — retrieval is scoped by `corpus_id`
 - The entire reasoning process streams to the dashboard in real-time — tool calls, intermediate findings, final synthesis
 - The system is config-driven: LLM provider, model, and API endpoint are environment variables
-- The frontend is a Vite + SolidJS SPA served as static files, connecting to the backend via `@tanstack/ai-solid`'s `useChat` hook over the AG-UI protocol
+- The frontend is a Vite + SolidJS SPA served as static files, connecting to the backend via `@tanstack/ai-solid`'s `useChat` hook over SSE
 - The system is Dockerized for deployment, with a native `fastapi dev` workflow for local development
 
 The architecture is intentionally corpus-scoped: each conversation is bound to one corpus from start to finish, every retrieval query carries the active corpus identifier, and adding a new knowledge base is primarily an ingestion and configuration task.
@@ -50,7 +50,7 @@ The architecture is intentionally corpus-scoped: each conversation is bound to o
 14. As the developer, I want the RAG pipeline to use pgvector with `corpus_id` scoping for semantic search, so that I can demonstrate vector database skills with multi-corpus isolation.
 15. As the developer, I want the MCP server to accept a `corpus_id` parameter so tools operate within the correct scope, and to be independently runnable and testable.
 16. As the developer, I want the system to run in Docker Compose with a single command, so that deployment is reproducible.
-17. As the developer, I want ADK tracing instrumented on all agent calls, so that I can debug and demonstrate observability awareness.
+17. As the developer, I want LangSmith tracing instrumented on all agent calls, so that I can debug and demonstrate observability awareness.
 18. As the developer, I want the frontend to be a vanilla SPA (no Next.js, no Vercel) served as static files, so that I retain full deployment flexibility.
 
 ## Implementation Decisions
@@ -64,43 +64,24 @@ Landing Page
   ├── /corpora/eu-ai-act  ─── Corpus-specific route (by slug)
   └── /corpora/uk-civil-procedure ─── Corpus-specific route (by slug)
         │
-SolidJS SPA ──AG-UI/SSE──▶ FastAPI ──▶ Google ADK Agent
-  (@tanstack/ai-solid,     (create_app()    ├── Single agent (current)
-   fetchServerSentEvents)   factory)        └── SequentialAgent (planned)
+SolidJS SPA ──SSE──▶ FastAPI ──▶ LangChain Pipeline
+  (@tanstack/ai-solid,    (create_app()    ├── Single agent (current)
+   fetchServerSentEvents)  factory)        └── Linear 3-agent pipeline (planned)
                               │
                               ├── MCP Server (standalone, for pi/Claude Desktop)
                               │         └── pgvector RAG (corpus-filtered)
                               │               └── PostgreSQL ── chunks with corpus_id
                               │
-                              └── backend/llm/ layer
-                                    ├── AdkLlmAdapter(BaseLlm)
-                                    │     ├── Extracts tool declarations from LlmRequest
-                                    │     └── Emits FunctionCall parts for tool requests
-                                    ├── HttpTransport / Transport Protocol
-                                    └── OpenAIClient | AnthropicClient
-                                          (config-driven: env vars for provider, model, endpoint)
+                              └── LangChain ChatOpenAI / ChatAnthropic
+                                    ├── Config-driven: env vars for provider, model, endpoint
+                                    └── corpus_id baked into @tool closures at factory time
 ```
 
 ### Modules
 
-**1. LLM Client Abstraction (`backend/llm/`)**
+**1. LLM Layer**
 
-A config-driven multi-provider abstraction layer. The package exposes a single abstract interface (`LLMClient`) with two provider implementations plus an ADK adapter:
-
-| File | Purpose |
-|------|---------|
-| `protocol.py` | Abstract `LLMClient` interface + `Message`, `Usage`, `LLMResponse`, `LLMError` types. `generate_stream` yields `(text_delta, usage)` tuples so callers can observe usage mid-stream without mutating instance state. Pure Python, no framework coupling. |
-| `transport.py` | `HttpTransport` — owns an `httpx.AsyncClient`, provides `send()` / `send_stream()`, wraps HTTP errors into `LLMError`. Also exposes a `Transport` Protocol that both `HttpTransport` and test fakes satisfy. Hoisted `_parse_error_body` from the duplicate implementations. |
-| `anthropic.py` | `AnthropicClient` — delegates HTTP to a `Transport` instance; POSTs to `{base_url}/messages` (Anthropic messages format). Parses streaming SSE (`content_block_delta`). |
-| `openai.py` | `OpenAIClient` — delegates HTTP to a `Transport` instance; POSTs to `{base_url}/chat/completions` (OpenAI format). Parses streaming SSE (`choices[...].delta.content`). |
-| `factory.py` | `create_llm_client()` reads `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL` from Settings / `.env` and returns the configured client. |
-| `adk_adapter.py` | `AdkLlmAdapter(BaseLlm)` — bridges any `LLMClient` into Google ADK. Converts ADK `LlmRequest` → `Message[]`, calls the client, wraps the response as ADK `LlmResponse` with `usage_metadata` so ADK's tracing and observability see token counts. Accumulates `Usage` from stream tuples rather than reading `last_usage` post-stream. |
-
-Provider selection is config-driven: `LLM_PROVIDER=openai` hits `/chat/completions`; `LLM_PROVIDER=anthropic` hits `/messages`. Each client accepts an optional `transport` parameter — when omitted a fresh `HttpTransport` is created with its own timeout. Tests inject a `FakeTransport` to avoid real HTTP calls.
-
-`_parse_error_body` lives in `transport.py` as a shared utility rather than being duplicated across clients — the hoist keeps error-handling uniform.
-
-The client is config-driven: `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, and `LLM_BASE_URL` are set via environment variables. Swapping providers is a config change, not a code change.
+LangChain's `ChatOpenAI` (or `ChatAnthropic` for Claude) handles model interaction. The provider, model name, API key, and base URL are configured via environment variables (`LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`) read by Pydantic `Settings` — swapping providers is a config change, not a code change. The `HttpTransport` and `LLMError` types from the earlier custom LLM layer remain in use by the embedding client; all model interaction now goes through LangChain's built-in classes.
 
 **2. Database Layer (`backend/db.py` + `backend/models.py`)**
 
@@ -113,15 +94,14 @@ The client is config-driven: `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, and `LL
 **3. FastAPI Backend (`backend/`)**
 
 Standard FastAPI application assembled via the `create_app()` factory with:
-- `POST /api/chat` — mounted via `ag_ui_adk.add_adk_fastapi_endpoint()`, accepts AG-UI `RunAgentInput` (which includes the active corpus ID), invokes the ADK agent with corpus-scoped context, returns streaming AG-UI events over SSE
-- `GET /api/corpora` — returns the list of available knowledge bases and their metadata: a persistent `id` (UUIDv4 used internally for DB scoping, MCP tool params, and chunk metadata), a `slug` (human-readable route segment, e.g. `/corpora/us-tax-code`, mutable), a `name` (display name shown on landing cards and headers, mutable), and a `description`
+- `POST /api/chat/{slug}` — raw SSE streaming endpoint that resolves the corpus slug to a UUID via `CorporaConfig.get(slug)`, creates a LangChain agent with corpus-scoped RAG tools, and streams the agent's response as TanStack AI SSE events (`content`, `tool_call`, `done`, `[DONE]`). Corpus routing is URL-based, eliminating state-propagation issues.
+- `GET /api/corpora` — returns the list of available knowledge bases and their metadata: a persistent `id` (UUIDv4 used internally for DB scoping, MCP tool params, and chunk metadata), a `slug` (human-readable route segment, e.g. `/api/chat/us-tax-code`, mutable), a `name` (display name shown on landing cards and headers, mutable), and a `description`
 - `GET /api/health` — health check
-- `GET /capabilities` — agent capability discovery (added by AG-UI middleware)
-- `POST /agents/state` — experimental thread state retrieval (added by AG-UI middleware)
 - Pydantic settings via `config.py` (reads `.env` for LLM config, Postgres credentials)
-- Application assembly via `create_app(llm_client, settings)` factory with dependency injection — tests pass a `FakeLLMClient` directly, no import-time patching. The module-level `app = create_app()` preserves `fastapi dev` compatibility. A FastAPI lifespan handler closes transport connections on shutdown.
+- Application assembly via `create_app(settings, corpora_config)` factory with dependency injection — tests pass fakes directly, no import-time patching. The module-level `app = create_app()` preserves `fastapi dev` compatibility.
+- `ChatGuard` middleware for token budget enforcement and query validation
 
-The `POST /api/chat` endpoint extracts the `corpus_id` from the incoming request and injects it into the ADK agent's session context, ensuring every tool call carries the active corpus identifier.
+The `POST /api/chat/{slug}` endpoint looks up the corpus slug via `CorporaConfig.get(slug)`, injects the resolved `corpus_id` into the tool factory (`create_rag_tools(corpus_id=...)`), and streams the pipeline result. The corpus ID is baked into LangChain `@tool` closures — the LLM never sees it, preventing retrieval-scope contamination.
 
 **4. Embedding Client (`backend/embeddings/`)**
 
@@ -170,29 +150,39 @@ A standalone Python MCP server (official `mcp` SDK, stdio transport) exposing tw
 
 Both tools accept and enforce a `corpus_id` parameter. Missing or unknown `corpus_id` returns a structured error (not an exception). Errors are returned as dicts, not raised — the agent always gets a parseable response. The server wraps the RAG query interface directly (no HTTP).
 
-**Standalone mode:** `uv run python -m backend.mcp_server` for MCP Inspector or Claude Desktop. The server is **not** embedded in the FastAPI process — the ADK agents use native `FunctionTool` wrappers (see ADR-0007), not `MCPToolset`. Both consumers import the same functions from `backend/rag/search.py`.
+**Standalone mode:** `uv run python -m backend.mcp_server` for MCP Inspector or Claude Desktop. The server is **not** embedded in the FastAPI process — the LangChain pipeline tools and the MCP server both import the same functions from `backend/rag/search.py`.
 
-**9. Google ADK Agent System (`backend/agents/`)**
+**9. LangChain Agent Pipeline (`backend/agents/`)**
 
-Three specialist agents, each defined as an ADK `LlmAgent` and each operating within the active corpus:
+A linear multi-agent pipeline built with LangChain's `create_agent`. Each agent is a single `create_agent()` call with its own system prompt and tool set. The pipeline is orchestrated by a simple async generator (`run_pipeline`) that passes the full message history through each stage:
 
-- **Corpus Researcher:** "You search the active knowledge base for facts, dates, definitions, and specifications relevant to the user's question. Use the `rag_search` tool (corpus is automatically scoped via session state). Report your findings with exact citations."
-- **Corpus Critic:** "You review the Researcher's findings against the active corpus. Identify gaps, contradictions, weak citations, or missing context. Use `rag_search` for follow-up queries and `rag_read_document` to read full source context around promising chunks. Produce a critique with specific requests for clarification."
-- **Corpus Synthesizer:** "You produce the final answer. Synthesize the Researcher's findings and the Critic's review into a concise, cited answer grounded in the active corpus. Structure: summary, key findings with citations (chunk IDs and source metadata), confidence assessment."
+- **Corpus Researcher:** A LangChain agent with `rag_search` and `rag_read_document` tools. Scoped to the active corpus via a tool factory (`create_rag_tools(corpus_id=X)`) that bakes the corpus UUID into each tool's closure — the LLM never sees the UUID. The agent searches the knowledge base for facts, dates, definitions, and specifications relevant to the user's question, and returns its findings with exact citations.
+- **Corpus Critic (planned):** A LangChain agent with no tools (system prompt only). Reviews the Researcher's findings for gaps, contradictions, weak citations, or missing context. Produces a critique with specific requests for clarification.
+- **Corpus Synthesizer (planned):** A LangChain agent with no tools (system prompt only). Synthesizes the Researcher's findings and the Critic's review into a concise, cited answer grounded in the active corpus. Structure: summary, key findings with citations (chunk IDs and source metadata), confidence assessment.
 
-An ADK `SequentialAgent` orchestrates the flow: Researcher → Critic → Synthesizer. Each agent receives the previous agent's output in its context. Corpus scoping is via ADK session state — `corpusId` flows from frontend `state: { corpusId: "uuid" }` → AG-UI→ADK bridge → session state → `tool_context.state.get("corpusId")`. The `tool_context` parameter is auto-detected by ADK's `find_context_parameter()` and stripped from the LLM declaration (`FunctionTool._ignore_params`), so `corpusId` is never exposed to the model. No hardcoded corpus IDs in any agent prompt.
+**Tools** are defined via the `@tool` decorator from `langchain_core.tools`. `create_rag_tools(corpus_id, ...)` returns two LangChain `BaseTool` objects:
+- `rag_search(query, top_k)` — semantic vector search over the active corpus
+- `rag_read_document(chunk_ids)` — retrieve full source context for given chunk IDs
 
-Tools are wired via ADK native `FunctionTool` (per ADR-0007), **not** through MCP. Both the MCP server and ADK tools import the same `backend/rag/search.py` functions — single source of truth. The `make_rag_tools()` factory provides `rag_search` and `rag_read_document` as async functions with lazy dependency injection, ready for any multi-agent topology.
+Both tools accept only the parameters the LLM should control (`query`, `top_k`, `chunk_ids`). The `corpus_id` is baked into the closure at factory time, ensuring retrieval-scope isolation without depending on session-state plumbing.
 
-**Current implementation status:** A single `Agent(name="rag_assistant")` is wired in `create_app()` with `FunctionTool(rag_search)` and `FunctionTool(rag_read_document)`, and a system prompt that instructs tool use, citation requirements, and off-topic refusal. The single agent will be replaced by the `SequentialAgent` pipeline above once tool calling is confirmed working end-to-end (see investigation notes).
+The RAG query functions themselves live in `backend/rag/search.py` — the single source of truth shared by both the LangChain tools and the standalone MCP server.
 
-Agent thinking and intermediate results stream via ADK's built-in event system, which the AG-UI middleware converts to SSE events (`RUN_STARTED` → `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT`* → `TEXT_MESSAGE_END` → `RUN_FINISHED`).
+**Current implementation status:** A single-agent pipeline is wired in `backend/main.py` and `backend/agents/pipeline.py`. The pipeline creates a `ChatOpenAI` model (config-driven from environment variables), wraps the RAG tools with the active corpus UUID, calls `create_agent(model, tools, system_prompt)`, and streams the agent's response back to the frontend over SSE. The single agent will be replaced by the linear 3-agent pipeline (Researcher → Critic → Synthesizer) once streaming shows individual agent interactions clearly in the UI.
+
+**SSE streaming format:** The pipeline yields TanStack AI-compatible SSE event dicts:
+```json
+{"type": "content", "delta": "Hello", "content": "Hello", "role": "assistant"}
+{"type": "tool_call", "toolCall": {"id": "call_1", "type": "function", "function": {"name": "rag_search", ...}}}
+{"type": "done", "finishReason": "stop", "usage": {"promptTokens": 0, "completionTokens": 0}}
+```
+followed by the `data: [DONE]` sentinel. The frontend's `@tanstack/ai-solid` `useChat` hook parses this format natively.
 
 **Foundation already in place for multi-agent:**
-- `backend/agents/tools.py` — RAG tool functions with session-state-based corpus scoping
-- `backend/main.py` — agent construction with `FunctionTool` wiring
-- `tests/agents/test_tools.py` — 6 tests (corpus scoping, missing corpusId, empty corpus)
-- `tests/test_main.py` — 2 integration tests (corpusId in state, tool declaration shape)
+- `backend/agents/langchain_tools.py` — `create_rag_tools(corpus_id, ...)` factory with lazy dependency injection
+- `backend/agents/pipeline.py` — pipeline runner (currently single-agent, extensible to 3-agent linear chain)
+- `backend/main.py` — route-based SSE endpoint with slug → corpus UUID resolution
+- `tests/agents/test_langchain_tools.py` — 11 tests (tool shape, corpus scoping, cross-corpus isolation)
 
 **10. SolidJS Frontend (`frontend/`)**
 
@@ -203,8 +193,8 @@ A Vite + SolidJS SPA with route-based corpus selection using `@solidjs/router`:
 - **No in-chat corpus dropdown.** The active corpus is set by the route and cannot be changed mid-conversation.
 - Chat input area (auto-growing textarea + submit and stop buttons)
 - Streaming message display via user/assistant text bubbles
-- Agent labels, tool call displays, and reasoning steps rendered in real-time as the multi-agent pipeline runs *(pending: integrated as part of the ADK agent frontend pipeline)*
-- Cited answer blocks showing knowledge-base sources in the final response *(pending: depends on the ADK agent system returning citations in the output)*
+- Agent labels, tool call displays, and reasoning steps rendered in real-time as the multi-agent pipeline runs *(pending: integrated as part of the LangChain agent streaming pipeline)*
+- Cited answer blocks showing knowledge-base sources in the final response *(pending: depends on the agent pipeline returning citations in the output)*
 - Agent status indicators (thinking / searching / synthesizing / done), shown per agent as the pipeline progresses *(pending: requires agent metadata in the AG-UI event stream)*
 - Typing indicator (animated ellipsis) shown while the LLM is generating a response
 - Error banner for LLM errors and localStorage quota warnings
@@ -213,7 +203,7 @@ A Vite + SolidJS SPA with route-based corpus selection using `@solidjs/router`:
 - Dark/light theme toggle, persisted in localStorage
 - Tailwind CSS for styling (no component library dependency)
 
-Connects to `POST /api/chat` via `@tanstack/ai-solid`'s `useChat` hook with `fetchServerSentEvents` adapter (AG-UI protocol over SSE). The `corpusId` is sent as part of the chat request from the route-level context.
+Connects to `POST /api/chat/{slug}` via `@tanstack/ai-solid`'s `useChat` hook with `fetchServerSentEvents` adapter (TanStack AI SSE protocol). The corpus slug is part of the URL path — no corpus UUID is sent in the request body.
 
 **11. Seeding Script (`scripts/seed_knowledge_base.py`)**
 
@@ -224,7 +214,7 @@ Run once per corpus on first deploy. On subsequent deploys, the hash-based diff 
 **12. Deployment**
 
 Two separate Docker images, each self-contained:
-- **`multi-agent-rag-be`** (`backend/Dockerfile`): FastAPI + ADK + MCP + RAG on `python:3.13-slim`. Also `COPY`s `corpora/` and `scripts/` into the image so the seeding script has access to source documents.
+- **`multi-agent-rag-be`** (`backend/Dockerfile`): FastAPI + LangChain + MCP + RAG on `python:3.13-slim`. Also `COPY`s `corpora/` and `scripts/` into the image so the seeding script has access to source documents.
 - **`multi-agent-rag-fe`** (`frontend/Dockerfile`): multi-stage — Bun builds the SolidJS SPA, then Caddy serves it with `/api/*` reverse-proxied to the backend
 
 Deployed via a two-service docker-compose on Coolify:
@@ -251,7 +241,7 @@ The knowledge base comprises multiple curated, authoritative, civilian-facing co
 
 Each corpus has three identifiers:
 - A **persistent `corpus_id`** (UUIDv4) — used internally for DB scoping, MCP tool parameters, chunk metadata, and conversation records. This never changes once assigned.
-- A **human-readable `slug`** — used in the URL (`/corpora/<slug>`) to provide clean, memorable routes. Mutable: changing the slug breaks existing bookmarks, which is acceptable collateral damage (handled gracefully — see below).
+- A **human-readable `slug`** — used in the URL (`/api/chat/<slug>`) to provide clean, memorable routes. Mutable: changing the slug breaks existing bookmarks, which is acceptable collateral damage (handled gracefully — see below).
 - A **`name`** — a human-readable display label shown on landing page cards, headers, and conversation context. Mutable independently of the slug.
 
 Each corpus:
@@ -269,9 +259,7 @@ Documents within each corpus are pulled as markdown or text, chunked (~500-token
 
 ### LLM Provider Strategy
 
-The `LLMClient` abstraction (`backend/llm/`) supports both OpenAI and Anthropic message formats via a config-driven factory. `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, and `LLM_BASE_URL` are set via environment variables — swapping providers is a config change, not a code change.
-
-The abstract interface encodes the *contract* (messages in → `StreamEvent`s out), not a specific provider's SDK. `generate_stream` yields `StreamEvent` objects that carry content deltas (text), optional `tool_calls` (id/name/args dictionaries), and final usage metadata — all in a single channel. This replaces the earlier `(text_delta, usage)` tuple approach and the `last_usage` mutable-state antipattern.
+LangChain's model classes handle provider abstraction. The `langchain-openai` package's `ChatOpenAI` works with any OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq, etc.), and `langchain-anthropic`'s `ChatAnthropic` handles Anthropic/Claude. The provider, model, API key, and base URL are set via environment variables (`LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`) read by Pydantic `Settings` — swapping providers is a config change, not a code change.
 
 ### Embedding Provider Strategy
 
@@ -281,15 +269,15 @@ Config env vars: `EMBEDDING_MODEL`, `EMBEDDING_API_KEY`, `EMBEDDING_BASE_URL`, `
 
 ### Observability
 
-ADK's built-in tracing captures each agent's turns, tool calls, token usage, and latency. Traces are viewable through ADK's dev tools. No external observability service (Langfuse, etc.) is added at this stage.
+LangSmith traces each agent's turns, tool calls, token usage, and latency. `LANGSMITH_API_KEY` and `LANGSMITH_TRACING=true` are set via environment variables. No external observability service (Langfuse, etc.) is added at this stage.
 
 ## Testing Decisions
 
-- **What makes a good test:** Test the external behaviour of each module through its public interface. Do not test implementation details, LLM output quality, or ADK internals. Mock the LLM client at its abstract interface boundary (`LLMClient`); only the concrete client tests mock at the HTTP wire level, because their request/response parsing is where real bugs live.
-- **Stack:** `pytest` + `pytest-asyncio` + `pytest-httpx` (wire-level mock, transport module only).
-- **Transport seam:** HTTP is abstracted behind a `Transport` protocol. Production code uses `HttpTransport`; tests use `FakeTransport` (no HTTP mocking library needed outside the transport's own tests).
-- **DI seam:** `backend/main.py` exposes a `create_app(llm_client)` factory. Tests call `create_app(llm_client=FakeLLMClient())` — no module reassignment, no import-order footguns.
+- **What makes a good test:** Test the external behaviour of each module through its public interface. Do not test implementation details, LLM output quality, or LangChain internals. Mock the database and embedding client at their abstract boundaries; only the concrete client tests mock at the HTTP wire level.
+- **Stack:** `pytest` + `pytest-asyncio` + `pytest-httpx`.
+- **DI seam:** `backend/main.py` exposes a `create_app(settings, corpora_config)` factory. Tests pass fakes via injection — no module reassignment, no import-order footguns.
 - **Database:** None. All tests are pure unit tests with no Docker or pgvector dependency.
+- **Tool testability:** The `create_rag_tools(corpus_id, sessionmaker, embedding_client)` factory accepts optional fakes for both the DB session and embedding client — tests inject `FakeSessionMaker` and `FakeEmbeddingClient` instead of patching imports.
 - **Test layout:** Parallel to `backend/` at `tests/`, keeping test code out of Docker images and navigation noise free.
 
 ### What is tested
@@ -307,31 +295,26 @@ Frontend tests: **56 tests across 6 files**, all passing. Runs in CI.
 
 | Module | How | What it covers |
 |---|---|---|
-| `backend/llm/protocol.py` | Pure-data assertions | `Message`, `Usage`, `LLMResponse`, `LLMError` construction; abstract class guard |
-| `backend/llm/transport.py` | `pytest-httpx` | `send` and `send_stream` return/error behaviour, `_parse_error_body` edge cases, `close` idempotency |
-| `backend/llm/openai.py` | `FakeTransport` | Request body shape (system→messages[0]), SSE deltas, `[DONE]`, usage from final chunk, 4xx→`LLMError` |
-| `backend/llm/anthropic.py` | `FakeTransport` | Request body shape (system in separate field), SSE events (`content_block_delta`, `message_start`, `message_delta`), error handling |
-| `backend/llm/factory.py` | Fixture-based env override | Returns `OpenAIClient`/`AnthropicClient` by provider; `ValueError` on unknown |
-| `backend/llm/adk_adapter.py` | `FakeLLMClient` + real ADK types | `LlmRequest`→`Message[]` conversion, streaming deltas, usage metadata, system instruction extraction, function-call parts |
-| `backend/config.py` | Fixture-based env override | Defaults, `database_url` property, `extra='ignore'` |
-| `backend/main.py` | `create_app(llm_client=FakeLLMClient())` + `TestClient` | `GET /api/health` returns 200 JSON; `POST /api/chat` returns 200 |
-
-### Modules not yet tested (or partially tested)
-
-The following modules need tests. Tests will follow the existing pattern: mock at the abstract boundary, pure unit tests, no database dependency for business logic.
-
-| Module | How | What it covers |
-|---|---|---|
-| `frontend/.../LandingPage.tsx` | `render` + route simulation | Landing page renders corpus cards; `/corpora/:slug` resolves slug to corpus UUID; unknown slug shows friendly message + browse button; route change filters conversation list by corpus — 7 tests |
-| `backend/embeddings/openai.py` | `FakeTransport` | Request body shape, response parsing, `dimensions` param, 4xx→`EmbeddingError` |
-| `backend/embeddings/factory.py` | Fixture-based env override | Returns `OpenRouterEmbeddingClient` by config; `ValueError` on unknown |
 | `backend/rag/chunker.py` | Pure function | `MarkdownHeadingChunker` preserves heading boundaries; `ParagraphChunker` merges small paras; `RecursiveChunker` respects separator priority; mid-word splits prevented — 8 tests |
-| `backend/rag/search.py` | Mock embedding client + in-memory chunk store | `search_corpus` returns only chunks from correct corpus; `read_document` returns source-level context; scores are cosine similarity [0,1]; missing corpus_id raises — 5 tests |
+| `backend/rag/search.py` | Mock embedding client + in-memory chunk store | `search_corpus` returns only chunks from correct corpus; `read_document` returns source-level context; scores are cosine similarity [0,1]; missing corpus_id returns empty — 5 tests |
+| `backend/config.py` | Fixture-based env override | Defaults, `database_url` property, `extra='ignore'` |
+| `backend/corpus_config.py` | Fixture-based | List, get by slug/id, chunker resolution, duplicate detection, YAML loading — 10 tests |
+| `backend/middleware.py` | `TestClient` | Budget file read/write/exhaust; ChatGuard blocks/exhausts; budget bypass; query length validation — 21 tests |
+| `backend/agents/langchain_tools.py` | `FakeSessionMaker` + `FakeEmbeddingClient` | Tool shape (BaseTool), corpus-scoped results, cross-corpus isolation, error handling — 11 tests |
+| `backend/main.py` (SSE endpoint) | `TestClient` + monkeypatch | SSE content-type, unknown slug 404, parseable events, content+done events, `[DONE]` sentinel, middleware integration — 7 tests |
 | `scripts/seed_knowledge_base.py` | Fake file system + fake DB | New files inserted; unchanged skipped; deleted removed; changed re-processed — 6 tests |
 | `backend/mcp_server/server.py` | `FakeSearch` | `search_corpus` with corpus_id returns scoped results; missing corpus_id returns error; `read_document` returns source-level chunks — 4 tests |
-| `backend/agents/orchestrator.py` | Not yet created. Will test corpus ID propagation and cross-corpus isolation once multi-agent pipeline is built — 4 tests |
-| `backend/main.py` | `TestClient` | `GET /api/corpora` from YAML; corpus ID round-trip through chat — 2 tests (see `tests/test_main.py`) |
-| `backend/main.py` (agent config) | `FunctionTool` inspection | **Done (1 test):** tool declaration hides `tool_context` from LLM schema; `rag_search`/`rag_read_document` names and signature verified |
+| `backend/llm/*.py` | `FakeTransport` / `pytest-httpx` | Request body shape, SSE parsing, error handling — 56 tests across transport, openai, anthropic, protocol, factory |
+| `backend/models.py` | Pure ORM | Column types, constraints, indexes — 9 tests |
+
+**Total: 208 tests, all passing.**
+
+### Modules not yet created (planned)
+
+| Module | What it covers |
+|---|---|
+| `frontend/.../LandingPage.tsx` | Landing page renders corpus cards; slug resolution; unknown slug handling; route-based conversation filtering |
+| `backend/agents/orchestrator.py` | Multi-agent pipeline: Researcher → Critic → Synthesizer ordering; intermediate agent output streaming |
 
 ## Out of Scope
 
@@ -345,10 +328,10 @@ The following modules need tests. Tests will follow the existing pattern: mock a
 - Fine-tuning any LLM
 - Pinecone or any non-pgvector vector store
 - Hybrid search or reranking (pure vector similarity is sufficient for the use case)
-- LangChain, LangGraph, or any non-ADK orchestration framework
+- LangChain (beyond `create_agent`), Crew.AI, or any non-LangChain orchestration framework
 - n8n, Make, Zapier, or any automation platform integration
 - Next.js, Vercel, or any SSR framework
-- Langfuse or external observability service (ADK tracing is sufficient for demo purposes)
+- Langfuse or external observability service (LangSmith tracing is sufficient for demo purposes)
 - Mobile app or native client
 - Complex multi-environment CI/CD (staging, production, rollbacks)
 - User feedback scoring or evaluation datasets
@@ -357,7 +340,7 @@ The following modules need tests. Tests will follow the existing pattern: mock a
 
 This project has dual value:
 
-1. **Skill building:** Every module teaches a production skill that maps directly to Upwork job requirements — FastAPI, Pydantic, pgvector, MCP, ADK, SSE streaming, Docker deployment.
+1. **Skill building:** Every module teaches a production skill that maps directly to Upwork job requirements — FastAPI, Pydantic, pgvector, MCP, LangChain, SSE streaming, Docker deployment.
 
 2. **Proposal leverage:** The live demo URL is the centerpiece of every proposal. The pitch: *"I built a multi-agent research system with route-based corpus selection — users land on a dashboard, pick a curated knowledge base, and ask questions that three specialist agents answer by searching only that corpus. MCP tools, pgvector retrieval, real-time streaming, fully Dockerized. Here's a link. Pick a corpus and try it."*
 
@@ -375,4 +358,4 @@ The market-validated posting that this demo directly addresses:
 
 > "Create AI agents (3 to 4) and an MCP server with Tools registered. 3 agents using Google and 1 agent using Crew.AI. Need to prove how these agents can communicate via MCP server. Use a small public dataset and build a search to lookup in local dataset and then send to LLM via API call."
 
-Substitute Google ADK for Crew.AI, add multiple curated corpora with route-based selection, and the spec is a direct match.
+Substitute LangChain for Crew.AI, add multiple curated corpora with route-based selection, and the spec is a direct match.
