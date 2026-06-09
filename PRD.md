@@ -64,17 +64,18 @@ Landing Page
   ├── /corpora/eu-ai-act  ─── Corpus-specific route (by slug)
   └── /corpora/uk-civil-procedure ─── Corpus-specific route (by slug)
         │
-SolidJS SPA ──AG-UI/SSE──▶ FastAPI ──▶ Google ADK Orchestrator
-  (@tanstack/ai-solid,     (create_app()    ├── Researcher (corpus-scoped)
-   fetchServerSentEvents)   factory)        ├── Critic (corpus-scoped)
-                                              └── Synthesizer (corpus-scoped)
+SolidJS SPA ──AG-UI/SSE──▶ FastAPI ──▶ Google ADK Agent
+  (@tanstack/ai-solid,     (create_app()    ├── Single agent (current)
+   fetchServerSentEvents)   factory)        └── SequentialAgent (planned)
                               │
-                              ├── MCP Server (search_corpus, read_document)
+                              ├── MCP Server (standalone, for pi/Claude Desktop)
                               │         └── pgvector RAG (corpus-filtered)
                               │               └── PostgreSQL ── chunks with corpus_id
                               │
                               └── backend/llm/ layer
                                     ├── AdkLlmAdapter(BaseLlm)
+                                    │     ├── Extracts tool declarations from LlmRequest
+                                    │     └── Emits FunctionCall parts for tool requests
                                     ├── HttpTransport / Transport Protocol
                                     └── OpenAIClient | AnthropicClient
                                           (config-driven: env vars for provider, model, endpoint)
@@ -169,23 +170,29 @@ A standalone Python MCP server (official `mcp` SDK, stdio transport) exposing tw
 
 Both tools accept and enforce a `corpus_id` parameter. Missing or unknown `corpus_id` returns a structured error (not an exception). Errors are returned as dicts, not raised — the agent always gets a parseable response. The server wraps the RAG query interface directly (no HTTP).
 
-**Embedded mode:** `create_app()` spawns the MCP server as a subprocess on startup. The ADK agent connects via `MCPToolset` with stdio transport. The server process is killed on FastAPI shutdown.
-
-**Standalone mode:** `uv run python -m backend.mcp_server` for MCP Inspector or Claude Desktop.
+**Standalone mode:** `uv run python -m backend.mcp_server` for MCP Inspector or Claude Desktop. The server is **not** embedded in the FastAPI process — the ADK agents use native `FunctionTool` wrappers (see ADR-0007), not `MCPToolset`. Both consumers import the same functions from `backend/rag/search.py`.
 
 **9. Google ADK Agent System (`backend/agents/`)**
 
 Three specialist agents, each defined as an ADK `LlmAgent` and each operating within the active corpus:
 
-- **Corpus Researcher:** "You search the active knowledge base for facts, dates, definitions, and specifications relevant to the user's question. Use the `search_corpus` tool with the provided corpus ID. Report your findings with exact citations."
-- **Corpus Critic:** "You review the Researcher's findings against the active corpus. Identify gaps, contradictions, weak citations, or missing context. Use `search_corpus` for follow-up queries (always with the corpus ID) and `read_document` to read full source context around promising chunks. Produce a critique with specific requests for clarification."
-- **Corpus Synthesizer:** "You produce the final answer. Synthesize the Researcher's findings and the Critic's review into a concise, cited answer grounded in the active corpus. Structure: summary, key findings with citations, confidence assessment."
+- **Corpus Researcher:** "You search the active knowledge base for facts, dates, definitions, and specifications relevant to the user's question. Use the `rag_search` tool (corpus is automatically scoped via session state). Report your findings with exact citations."
+- **Corpus Critic:** "You review the Researcher's findings against the active corpus. Identify gaps, contradictions, weak citations, or missing context. Use `rag_search` for follow-up queries and `rag_read_document` to read full source context around promising chunks. Produce a critique with specific requests for clarification."
+- **Corpus Synthesizer:** "You produce the final answer. Synthesize the Researcher's findings and the Critic's review into a concise, cited answer grounded in the active corpus. Structure: summary, key findings with citations (chunk IDs and source metadata), confidence assessment."
 
-An ADK `SequentialAgent` orchestrates the flow: Researcher → Critic → Synthesizer. Each agent receives the previous agent's output and the active corpus ID in its context. The corpus ID is injected via ADK session state at the orchestration layer (stored on conversation init, read by each agent when making tool calls), not hardcoded in individual agents.
+An ADK `SequentialAgent` orchestrates the flow: Researcher → Critic → Synthesizer. Each agent receives the previous agent's output in its context. Corpus scoping is via ADK session state — `corpusId` flows from frontend `state: { corpusId: "uuid" }` → AG-UI→ADK bridge → session state → `tool_context.state.get("corpusId")`. The `tool_context` parameter is auto-detected by ADK's `find_context_parameter()` and stripped from the LLM declaration (`FunctionTool._ignore_params`), so `corpusId` is never exposed to the model. No hardcoded corpus IDs in any agent prompt.
 
-The MCP server tools are wired to the agents via ADK `MCPToolset` with stdio transport to the embedded subprocess.
+Tools are wired via ADK native `FunctionTool` (per ADR-0007), **not** through MCP. Both the MCP server and ADK tools import the same `backend/rag/search.py` functions — single source of truth. The `make_rag_tools()` factory provides `rag_search` and `rag_read_document` as async functions with lazy dependency injection, ready for any multi-agent topology.
 
-Agent thinking and intermediate results are streamed via ADK's built-in event system, which the AG-UI middleware converts to SSE events (`RUN_STARTED` → `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT`* → `TEXT_MESSAGE_END` → `RUN_FINISHED`).
+**Current implementation status:** A single `Agent(name="rag_assistant")` is wired in `create_app()` with `FunctionTool(rag_search)` and `FunctionTool(rag_read_document)`, and a system prompt that instructs tool use, citation requirements, and off-topic refusal. The single agent will be replaced by the `SequentialAgent` pipeline above once tool calling is confirmed working end-to-end (see investigation notes).
+
+Agent thinking and intermediate results stream via ADK's built-in event system, which the AG-UI middleware converts to SSE events (`RUN_STARTED` → `TEXT_MESSAGE_START` → `TEXT_MESSAGE_CONTENT`* → `TEXT_MESSAGE_END` → `RUN_FINISHED`).
+
+**Foundation already in place for multi-agent:**
+- `backend/agents/tools.py` — RAG tool functions with session-state-based corpus scoping
+- `backend/main.py` — agent construction with `FunctionTool` wiring
+- `tests/agents/test_tools.py` — 6 tests (corpus scoping, missing corpusId, empty corpus)
+- `tests/test_main.py` — 2 integration tests (corpusId in state, tool declaration shape)
 
 **10. SolidJS Frontend (`frontend/`)**
 
@@ -264,7 +271,7 @@ Documents within each corpus are pulled as markdown or text, chunked (~500-token
 
 The `LLMClient` abstraction (`backend/llm/`) supports both OpenAI and Anthropic message formats via a config-driven factory. `LLM_PROVIDER`, `LLM_MODEL`, `LLM_API_KEY`, and `LLM_BASE_URL` are set via environment variables — swapping providers is a config change, not a code change.
 
-The abstract interface encodes the *contract* (messages in → text+usage out), not a specific provider's SDK. `generate_stream` yields `(text_delta, usage)` tuples — usage is communicated through the return channel rather than through mutable instance state (`last_usage`), keeping the abstract seam pure.
+The abstract interface encodes the *contract* (messages in → `StreamEvent`s out), not a specific provider's SDK. `generate_stream` yields `StreamEvent` objects that carry content deltas (text), optional `tool_calls` (id/name/args dictionaries), and final usage metadata — all in a single channel. This replaces the earlier `(text_delta, usage)` tuple approach and the `last_usage` mutable-state antipattern.
 
 ### Embedding Provider Strategy
 
@@ -309,9 +316,9 @@ Frontend tests: **56 tests across 6 files**, all passing. Runs in CI.
 | `backend/config.py` | Fixture-based env override | Defaults, `database_url` property, `extra='ignore'` |
 | `backend/main.py` | `create_app(llm_client=FakeLLMClient())` + `TestClient` | `GET /api/health` returns 200 JSON; `POST /api/chat` returns 200 |
 
-### Modules not yet tested
+### Modules not yet tested (or partially tested)
 
-The following modules are planned but not yet in the codebase. Tests will follow the existing pattern: mock at the abstract boundary, pure unit tests, no database dependency for business logic.
+The following modules need tests. Tests will follow the existing pattern: mock at the abstract boundary, pure unit tests, no database dependency for business logic.
 
 | Module | How | What it covers |
 |---|---|---|
@@ -322,8 +329,9 @@ The following modules are planned but not yet in the codebase. Tests will follow
 | `backend/rag/search.py` | Mock embedding client + in-memory chunk store | `search_corpus` returns only chunks from correct corpus; `read_document` returns source-level context; scores are cosine similarity [0,1]; missing corpus_id raises — 5 tests |
 | `scripts/seed_knowledge_base.py` | Fake file system + fake DB | New files inserted; unchanged skipped; deleted removed; changed re-processed — 6 tests |
 | `backend/mcp_server/server.py` | `FakeSearch` | `search_corpus` with corpus_id returns scoped results; missing corpus_id returns error; `read_document` returns source-level chunks — 4 tests |
-| `backend/agents/orchestrator.py` | `FakeLLMClient` + fake MCP toolset | Corpus ID propagates to each agent's tool calls; cross-corpus leakage returns no results — 4 tests |
-| `backend/main.py` | `TestClient` | `GET /api/corpora` from YAML; corpus ID round-trip through chat — 2 tests |
+| `backend/agents/orchestrator.py` | Not yet created. Will test corpus ID propagation and cross-corpus isolation once multi-agent pipeline is built — 4 tests |
+| `backend/main.py` | `TestClient` | `GET /api/corpora` from YAML; corpus ID round-trip through chat — 2 tests (see `tests/test_main.py`) |
+| `backend/main.py` (agent config) | `FunctionTool` inspection | **Done (1 test):** tool declaration hides `tool_context` from LLM schema; `rag_search`/`rag_read_document` names and signature verified |
 
 ## Out of Scope
 

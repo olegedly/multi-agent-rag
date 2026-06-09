@@ -5,3 +5,6 @@ __pycache__
 .agent-env
 .env.coolify
 .WorkspaceBrain
+.llm-wiki
+.pi
+.pi-committer.toml
