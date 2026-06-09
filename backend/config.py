@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     llm_base_url: str = ""
     llm_max_tokens: int = 4096
 
+    # Cross-environment copy
+    dev_database_url: str = ""
+    supabase_direct_url: str = ""
+
     # Public demo abuse prevention
     demo_disable_budget: bool = False
     demo_daily_budget_tokens: int = 1_000_000
