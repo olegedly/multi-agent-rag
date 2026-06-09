@@ -94,7 +94,7 @@ LangChain's `ChatOpenAI` (or `ChatAnthropic` for Claude) handles model interacti
 **3. FastAPI Backend (`backend/`)**
 
 Standard FastAPI application assembled via the `create_app()` factory with:
-- `POST /api/chat/{slug}` — raw SSE streaming endpoint that resolves the corpus slug to a UUID via `CorporaConfig.get(slug)`, creates a LangChain agent with corpus-scoped RAG tools, and streams the agent's response as TanStack AI SSE events (`content`, `tool_call`, `done`, `[DONE]`). Corpus routing is URL-based, eliminating state-propagation issues.
+- `POST /api/chat/{slug}` — raw SSE streaming endpoint that resolves the corpus slug to a UUID via `CorporaConfig.get(slug)`, creates a LangChain agent with corpus-scoped RAG tools, and streams the agent's response as AG-UI protocol events via the `ag-ui-protocol` Python SDK (`EventEncoder`). Corpus routing is URL-based, eliminating state-propagation issues.
 - `GET /api/corpora` — returns the list of available knowledge bases and their metadata: a persistent `id` (UUIDv4 used internally for DB scoping, MCP tool params, and chunk metadata), a `slug` (human-readable route segment, e.g. `/api/chat/us-tax-code`, mutable), a `name` (display name shown on landing cards and headers, mutable), and a `description`
 - `GET /api/health` — health check
 - Pydantic settings via `config.py` (reads `.env` for LLM config, Postgres credentials)
@@ -170,13 +170,11 @@ The RAG query functions themselves live in `backend/rag/search.py` — the singl
 
 **Current implementation status:** A single-agent pipeline is wired in `backend/main.py` and `backend/agents/pipeline.py`. The pipeline creates a `ChatOpenAI` model (config-driven from environment variables), wraps the RAG tools with the active corpus UUID, calls `create_agent(model, tools, system_prompt)`, and streams the agent's response back to the frontend over SSE. The single agent will be replaced by the linear 3-agent pipeline (Researcher → Critic → Synthesizer) once streaming shows individual agent interactions clearly in the UI.
 
-**SSE streaming format:** The pipeline yields TanStack AI-compatible SSE event dicts:
-```json
-{"type": "content", "delta": "Hello", "content": "Hello", "role": "assistant"}
-{"type": "tool_call", "toolCall": {"id": "call_1", "type": "function", "function": {"name": "rag_search", ...}}}
-{"type": "done", "finishReason": "stop", "usage": {"promptTokens": 0, "completionTokens": 0}}
+**SSE streaming format:** The pipeline emits AG-UI protocol events via the `ag-ui-protocol` Python SDK. Pydantic event models (`RunStartedEvent`, `TextMessageStartEvent`, `TextMessageContentEvent`, `TextMessageEndEvent`, `RunFinishedEvent`, `RunErrorEvent`) are converted to SSE by `EventEncoder.encode()`, which produces camelCase JSON in `data: {...}\n\n` format. The event sequence is:
 ```
-followed by the `data: [DONE]` sentinel. The frontend's `@tanstack/ai-solid` `useChat` hook parses this format natively.
+RUN_STARTED → TEXT_MESSAGE_START → TEXT_MESSAGE_CONTENT → TEXT_MESSAGE_END → RUN_FINISHED
+```
+The `thread_id` and `run_id` are extracted from the TanStack AI request body (`body.threadId`, `body.runId`). Extra fields like `finishReason` and `usage` ride along on `RunFinishedEvent` via Pydantic's `extra="allow"` passthrough. The legacy `[DONE]` sentinel has been removed — `RUN_FINISHED` serves as the termination signal. The frontend's `@tanstack/ai-solid` `useChat` hook parses this format natively via `StreamProcessor.processChunk()`, which dispatches on AG-UI event types.
 
 **Foundation already in place for multi-agent:**
 - `backend/agents/langchain_tools.py` — `create_rag_tools(corpus_id, ...)` factory with lazy dependency injection
@@ -301,13 +299,14 @@ Frontend tests: **56 tests across 6 files**, all passing. Runs in CI.
 | `backend/corpus_config.py` | Fixture-based | List, get by slug/id, chunker resolution, duplicate detection, YAML loading — 10 tests |
 | `backend/middleware.py` | `TestClient` | Budget file read/write/exhaust; ChatGuard blocks/exhausts; budget bypass; query length validation — 21 tests |
 | `backend/agents/langchain_tools.py` | `FakeSessionMaker` + `FakeEmbeddingClient` | Tool shape (BaseTool), corpus-scoped results, cross-corpus isolation, error handling — 11 tests |
-| `backend/main.py` (SSE endpoint) | `TestClient` + monkeypatch | SSE content-type, unknown slug 404, parseable events, content+done events, `[DONE]` sentinel, middleware integration — 7 tests |
+| `backend/agents/pipeline.py` | Mocked `create_agent` + `AsyncMock` | AG-UI event sequence, RunStartedEvent fields, text message lifecycle, RunFinishedEvent passthrough, empty content skip, unknown corpus — 6 tests |
+| `backend/main.py` (SSE endpoint) | `TestClient` + monkeypatch | SSE content-type, unknown slug 404, parseable AG-UI events, middleware integration — 7 tests |
 | `scripts/seed_knowledge_base.py` | Fake file system + fake DB | New files inserted; unchanged skipped; deleted removed; changed re-processed — 6 tests |
 | `backend/mcp_server/server.py` | `FakeSearch` | `search_corpus` with corpus_id returns scoped results; missing corpus_id returns error; `read_document` returns source-level chunks — 4 tests |
 | `backend/llm/*.py` | `FakeTransport` / `pytest-httpx` | Request body shape, SSE parsing, error handling — 56 tests across transport, openai, anthropic, protocol, factory |
 | `backend/models.py` | Pure ORM | Column types, constraints, indexes — 9 tests |
 
-**Total: 208 tests, all passing.**
+**Total: 214 tests, all passing.**
 
 ### Modules not yet created (planned)
 
