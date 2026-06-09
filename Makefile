@@ -1,16 +1,14 @@
-.PHONY: test test-quick check check-quick dev
+.PHONY: test test_backend test_frontend dev help
 
-check:  ## Run type checker and full test suite
-	uv run pyright backend/ tests/ && uv run pytest && cd frontend && bun install --frozen-lockfile && bunx vitest run
+test: test_backend test_frontend  ## Full test suite (backend + frontend)
 
-check-quick:  ## Type check and run tests without re-syncing
-	uv run pyright backend/ tests/ && uv run pytest && cd frontend && bunx vitest run
+test_backend:  ## Backend: install deps, type-check, run tests
+	uv sync --extra test
+	uv run pyright backend/ tests/
+	uv run pytest
 
-test:  ## Install test deps and run the full test suite
-	uv sync --extra test && make check-quick
-
-test-quick:  ## Run tests without re-syncing
-	uv run pytest && cd frontend && bunx vitest run
+test_frontend:  ## Frontend: install deps, type-check, run tests
+	cd frontend && bun install --frozen-lockfile && bunx tsc --noEmit && bunx vitest run
 
 dev:  ## Start the dev server (database, backend, frontend)
 	./dev.sh
