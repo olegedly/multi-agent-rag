@@ -145,11 +145,12 @@ async def run_pipeline(
         # Token-level streaming via astream(stream_mode="messages")
         # ------------------------------------------------------------------
         async for chunk, metadata in agent.astream(
-            {"messages": lc_messages},
+            {"messages": lc_messages},  # type: ignore[arg-type]
             config={"recursion_limit": 25},
             stream_mode="messages",
         ):
-            handler.observe(chunk, metadata)
+            if isinstance(chunk, BaseMessage):
+                handler.observe(chunk, metadata)  # type: ignore[arg-type]
             for event in handler.drain():
                 yield event
 

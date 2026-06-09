@@ -7,9 +7,11 @@ from event emission for clean testability.
 from __future__ import annotations
 
 import time
+from typing import cast
 from uuid import uuid4
 
 from ag_ui.core.events import (
+    BaseEvent,
     ReasoningMessageContentEvent,
     ReasoningMessageEndEvent,
     ReasoningMessageStartEvent,
@@ -25,6 +27,7 @@ from ag_ui.core.events import (
     ToolCallStartEvent,
 )
 from langchain_core.messages import AIMessageChunk, BaseMessage, ToolMessage
+from langchain_core.messages.tool import ToolCallChunk
 
 
 class StreamEventHandler:
@@ -60,7 +63,7 @@ class StreamEventHandler:
         self._open_tool_ids: set[str] = set()
 
         # Draining — run_started is buffered on construction
-        self._pending: list[object] = [
+        self._pending: list[BaseEvent] = [
             RunStartedEvent(
                 thread_id=thread_id,
                 run_id=run_id,
@@ -87,18 +90,18 @@ class StreamEventHandler:
         elif isinstance(chunk, ToolMessage):
             self._observe_tool_result(chunk)
 
-    def drain(self) -> list[object]:
+    def drain(self) -> list[BaseEvent]:
         """Return all buffered events and clear the pending queue."""
         events = self._pending
         self._pending = []
         return events
 
-    def finalize(self) -> list[object]:
+    def finalize(self) -> list[BaseEvent]:
         """Close any open blocks and emit ``RUN_FINISHED``.
 
         Returns
         -------
-        list[object]
+        list[BaseEvent]
             Closing events followed by ``RunFinishedEvent``.
         """
         self._close_reasoning()
@@ -110,13 +113,11 @@ class StreamEventHandler:
                 thread_id=self._thread_id,
                 run_id=self._run_id,
                 timestamp=_now_ms(),
-                finishReason="stop",
-                usage={"promptTokens": 0, "completionTokens": 0},
             ),
         )
         return self.drain()
 
-    def error(self, message: str) -> list[object]:
+    def error(self, message: str) -> list[BaseEvent]:
         """Close open blocks and emit ``RUN_ERROR``.
 
         Parameters
@@ -126,7 +127,7 @@ class StreamEventHandler:
 
         Returns
         -------
-        list[object]
+        list[BaseEvent]
             Closing events followed by ``RunErrorEvent``.
         """
         self._close_reasoning()
@@ -145,14 +146,14 @@ class StreamEventHandler:
     def _observe_ai_chunk(self, chunk: AIMessageChunk) -> None:
         """Dispatch an ``AIMessageChunk`` to reasoning / text / tool handlers."""
         # Reasoning (if present)
-        reasoning = chunk.additional_kwargs.get("reasoning_content")
-        if reasoning:
+        raw_reasoning = chunk.additional_kwargs.get("reasoning_content")
+        if raw_reasoning and isinstance(raw_reasoning, str):
             self._close_text()  # can't interleave, but text may be open
             self._ensure_reasoning_open()
             self._pending.append(
                 ReasoningMessageContentEvent(
                     message_id=self._message_id,
-                    delta=reasoning,
+                    delta=raw_reasoning,
                 ),
             )
             return  # reasoning chunks usually carry no content or tool calls
@@ -169,39 +170,45 @@ class StreamEventHandler:
                 )
             # If there's also text content alongside tool calls, emit it
             # but make sure text block is open.
-            if chunk.content:
+            raw_content = chunk.content
+            if raw_content:
                 self._ensure_text_open()
+                delta = cast(str, raw_content) if isinstance(raw_content, str) else ""
                 self._pending.append(
                     TextMessageContentEvent(
                         message_id=self._message_id,
-                        delta=chunk.content,
+                        delta=delta,
                     ),
                 )
             return
 
         # Plain text content
-        if chunk.content:
+        raw_content = chunk.content
+        if raw_content:
             self._close_reasoning()
             self._ensure_text_open()
+            delta = cast(str, raw_content) if isinstance(raw_content, str) else ""
             self._pending.append(
                 TextMessageContentEvent(
                     message_id=self._message_id,
-                    delta=chunk.content,
+                    delta=delta,
                 ),
             )
 
     def _observe_tool_result(self, chunk: ToolMessage) -> None:
         """Emit TOOL_CALL_END + TOOL_CALL_RESULT for a ToolMessage."""
         tid = chunk.tool_call_id or ""
+        raw_content = chunk.content
         self._open_tool_ids.discard(tid)
         self._pending.append(
             ToolCallEndEvent(tool_call_id=tid, timestamp=_now_ms()),
         )
+        content_str = cast(str, raw_content) if isinstance(raw_content, str) else ""
         self._pending.append(
             ToolCallResultEvent(
                 message_id=self._message_id,
                 tool_call_id=tid,
-                content=chunk.content,
+                content=content_str,
             ),
         )
 
@@ -228,7 +235,7 @@ class StreamEventHandler:
                 ),
             )
 
-    def _ensure_tool_open(self, tcc: dict) -> None:
+    def _ensure_tool_open(self, tcc: ToolCallChunk) -> None:
         """Emit ``TOOL_CALL_START`` for a tool if not yet tracked."""
         tid = tcc.get("id") or ""
         if tid and tid not in self._open_tool_ids:
