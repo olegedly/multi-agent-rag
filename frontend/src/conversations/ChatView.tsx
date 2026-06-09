@@ -307,7 +307,7 @@ function ToolCallPartRenderer(props: { part: ToolCallPart }) {
           </span>
         </div>
         <div class="mt-0.5 text-(--text-secondary) font-mono text-[11px] whitespace-pre-wrap max-h-24 overflow-y-auto">
-          {props.part.arguments}
+          {formatToolResult(props.part.arguments)}
         </div>
       </div>
     </div>

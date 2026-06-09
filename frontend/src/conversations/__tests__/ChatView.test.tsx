@@ -579,7 +579,11 @@ describe("ChatView", () => {
     ));
 
     const all = document.body.textContent || "";
-    expect(all).toContain(args);
+    // Arguments are now rendered as YAML
+    expect(all).toContain("query: EU AI Act");
+    expect(all).toContain("top_k: 5");
+    // No raw JSON braces remaining
+    expect(all).not.toContain('"query"');
   });
 
   // ── Tracer bullet: empty parts ───────────────────────────────────────
