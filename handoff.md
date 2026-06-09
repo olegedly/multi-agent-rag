@@ -1,71 +1,102 @@
-# Handoff: RAG Tool Calling — State Plumbing Broken (corpusId Not Reaching tool_context)
+# Handoff: ADK → LangChain — Frontend Wiring
 
-## Context
+## Transition Story
 
-See prior handoff at `/tmp/handoff-rag-tool-calling.md` for the serialization fix that made tool calls actually execute. That fix works. This session diagnosed the next bug.
+The project was originally built on **Google ADK** (`ag_ui_adk` → `ADKAgent` → `AdkLlmAdapter` → custom `LLMClient` protocol). The ADK state pipeline had a critical bug: `corpusId` sent by the frontend in the POST body never reached `tool_context.state` inside the RAG tool functions. Every single RAG query returned `"No active corpus"`.
 
-## The Problem
+We migrated to **LangChain** (`create_agent` / `@tool` decorators) in a single TDD session. The custom `LLMClient` protocol, provider implementations (OpenAI/Anthropic), HTTP transport layer, and the ADK adapter bridge are all gone — replaced by `langchain-openai` `ChatOpenAI` / `ChatAnthropic`.
 
-**Tool calls execute, but every call returns `"No active corpus"`** because `corpusId` never appears in `tool_context.state` inside `backend/agents/tools.py`.
+## What Was Achieved (Backend)
 
-### Evidence (from Chrome SSE stream)
+| Layer | Before (ADK) | After (LangChain) |
+|---|---|---|
+| Agent | `Agent(model=AdkLlmAdapter(...), tools=[FunctionTool(...)])` | `create_agent(model=ChatOpenAI(...), tools=[...])` |
+| Tool factory | `make_rag_tools()` → ADK functions reading `tool_context.state["corpusId"]` | `create_rag_tools(corpus_id=X)` → LangChain `@tool` with `corpus_id` in closure |
+| Endpoint | `add_adk_fastapi_endpoint(app, ADKAgent(...), path="/api/chat")` | Raw `@app.post("/api/chat/{slug}")` with SSE `StreamingResponse` |
+| Streaming | ADK's internal SSE → `ag_ui_adk` marshalling | TanStack AI SSE format via `async for event in run_pipeline(...)` |
+| Routing | Generic `/api/chat` — corpusId in `body.state` | Route-based `POST /api/chat/{slug}` — slug resolves via `CorporaConfig.get(slug)` |
 
-- 14+ `rag_search` calls — all return `{"results": [], "error": "No active corpus — start a conversation from a knowledge base route"}`
-- 4+ `rag_read_document` calls with hallucinated chunk IDs (592-601) — same error
-- Final `STATE_SNAPSHOT` at `RUN_FINISHED` shows only: `{_ag_ui_thread_id, _ag_ui_app_name, _ag_ui_user_id}` — **no `corpusId`**
-- The model spirals for ~3 minutes, trying increasingly creative queries, all fail identically
+Key files created:
+- `backend/agents/langchain_tools.py` — `create_rag_tools(corpus_id, ...)` factory
+- `backend/agents/pipeline.py` — LangChain `create_agent` pipeline, yields TanStack SSE dicts
+- `backend/main.py` — rewritten: no ADK imports, slug-based SSE endpoint
 
-### Frontend sends corpusId
+Key files removed:
+- `backend/agents/tools.py` — ADK `tool_context.state` pattern
+- `backend/llm/adk_adapter.py` — ADK `BaseLlm` bridge
+- `tests/agents/test_tools.py`, `tests/test_main.py`, `tests/llm/test_adk_adapter.py`
 
-`frontend/src/conversations/useChatStore.ts` line 18:
-```ts
-body: {
-  state: { corpusId: "315e41aa-8657-46c0-ac4b-ea4355babf0a" },
-},
+Current state: **208 tests pass**, all green. The old `backend/llm/` protocol files still exist (`protocol.py`, `openai.py`, `anthropic.py`, `transport.py`, `factory.py`) because `backend/embeddings/openai.py` shares `LLMError` and `HttpTransport` with them. They are stable, tested infrastructure — keep unless the embeddings module gets refactored.
+
+## What the Frontend Needs
+
+**Minimal change:** the frontend currently hits `POST /api/chat` with `body.state.corpusId` in the payload. The backend now expects `POST /api/chat/{slug}` where the slug is from `corpora.yaml` (e.g. `"eu-ai-act"`). The `body` parameter is also deprecated in TanStack AI — the modern way is `forwardedProps`.
+
+### The Change (one file: `frontend/src/conversations/useChatStore.ts`)
+
+```typescript
+// BEFORE (ADK)
+const chat = useChat({
+    connection: fetchServerSentEvents("/api/chat", {
+        fetchClient: resilientFetch,
+    }),
+    body: {
+        state: { corpusId: "315e41aa-8657-46c0-ac4b-ea4355babf0a" },
+    },
+});
+
+// AFTER (LangChain) — hardcoded slug for now
+const chat = useChat({
+    connection: fetchServerSentEvents("/api/chat/eu-ai-act", {
+        fetchClient: resilientFetch,
+    }),
+});
 ```
 
-## What Was Investigated
+That's it. Remove the entire `body` property (it was the deprecated AG-UI pattern for injecting state, which the ADK was supposed to propagate to `tool_context.state` but never did). Remove `forwardedProps` too — not needed since the corpus routing is now URL-based.
 
-### State pipeline traced in `ag_ui_adk` (installed package)
+The corpus slug `"eu-ai-act"` matches the entry in `backend/corpora.yaml`:
+```yaml
+corpora:
+  - id: "315e41aa-8657-46c0-ac4b-ea4355babf0a"
+    slug: "eu-ai-act"
+    name: "EU AI Act"
+    description: "European Union Artificial Intelligence Act..."
+    chunker: "markdown-heading"
+    documents: "corpora/eu-ai-act/**/*.md"
+```
 
-The pipeline in `adk_agent.py` looks correct at every layer:
+### Everything Else Stays
 
-1. **Line 2190** — `state_with_context = dict(input.state)` — reads `input.state` from `POST /api/chat` body
-2. **Line 2194** — Strips `_INTERNAL_STATE_KEYS` (which does NOT include `corpusId`)
-3. **Line 2210** — `persistent_state` gets non-temp keys (should include `corpusId`)
-4. **Line 2219** — `persistent_state` passed to `_ensure_session_exists(..., initial_state=persistent_state)`
-5. **Line 2234** — `update_session_state(backend_session_id, app_name, user_id, persistent_state)` updates session state
-6. **`_ensure_session_exists`** → `session_manager.get_or_create_session(... initial_state=initial_state)` → `session_service.create_session(... state=state)` — state merged into ADK session
+- `resilientFetch` — still works (handles non-ok responses)
+- `store.ts` — conversation persistence, no changes
+- `ChatView.tsx` — rendering, no changes
+- `App.tsx` — layout/theme, no changes
+- `Sidebar.tsx` — conversation list, no changes
+- `title.ts` — title derivation, no changes
 
-### ADK `tool_context.state`
+### Wiring Diagram
 
-The tool reads via `tool_context.state.get("corpusId")` — confirmed in `backend/agents/tools.py`. Diagnostic logging was added (`log.warning` at import time).
+```
+Frontend (SolidJS + @tanstack/ai-solid)
+    │ POST /api/chat/eu-ai-act
+    │ body: { messages: [...] }
+    ▼
+POST /api/chat/{slug} (FastAPI)
+    │
+    ├─ ChatGuard (budget + query validation)
+    │
+    └─ run_pipeline(messages, slug)
+            │
+            ├─ CorporaConfig.get(slug) → corpus UUID
+            ├─ create_rag_tools(corpus_id=uuid) → [rag_search, rag_read_document]
+            ├─ create_agent(model=ChatOpenAI(...), tools=[...])
+            │       └─ agent.ainvoke({"messages": [...]})
+            └─ yields TanStack SSE dicts → SSE stream → frontend
+```
 
-### What was NOT yet checked
+## Remaining Work (After Frontend Fix)
 
-- **Whether the POST body actually includes `corpusId`** — Chrome's network tab shows response bodies but NOT request bodies. Need to either:
-  - Add backend middleware to log the raw request body
-  - Or use `chrome_evaluate` to intercept `fetch` on the client side before the next request
-- **What TanStack AI Solid's `useChat` actually sends** — the `body` config option in `useChatStore.ts` may not map 1:1 to the POST body. Need to verify TanStack's wire format.
-
-## Next Steps (in order)
-
-1. **Verify request body** — Add a FastAPI middleware that logs `await request.body()` on POST /api/chat to confirm `corpusId` is in the wire payload
-2. **If corpusId IS in the body** → debug ADK state merge (add logging to `_ensure_session_exists`, `update_session_state`, and check ADK session state after create)
-3. **If corpusId is NOT in the body** → debug TanStack AI Solid's body serialization (what `body: { state: {...} }` actually produces)
-4. **Fallback approach** — If the ADK pipeline truly can't propagate state to tool_context, hardcode the corpusId in the agent instruction or tool function as a temporary workaround
-
-## Files Modified This Session
-
-- `backend/agents/tools.py` — Added diagnostic logging to `rag_search`:
-  - `import logging; log = logging.getLogger(__name__)` at top
-  - Logs `tool_context.state` and `corpus_id` before the guard clause
-
-## Environment
-
-- Frontend: Vite on port 3000 (Chrome tab)
-- Backend: uvicorn on port 8000 (`fastapi dev` with hot reload)
-- LLM: `z-ai/glm-4.5-air:free` via OpenRouter
-- Config: `PROVIDER=openai`, `BASE_URL=https://openrouter.ai/api/v1`
-- DB: Postgres on localhost:5432, 1326 docs in corpus `315e41aa-...`
-- All services managed by `dev.sh`
+1. **Multi-agent pipeline** — currently single-agent Researcher. Critic and Synthesizer roles are planned but not implemented.
+2. **Usage callback for budget** — the old ADK adapter had `usage_callback` that incremented the budget file. LangChain's `ChatOpenAI` has callbacks for this, but they haven't been wired yet.
+3. **Corpus picker UI** — the frontend would eventually let users choose which corpus to query, deriving the slug dynamically. Right now it's hardcoded.

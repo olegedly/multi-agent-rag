@@ -11,12 +11,9 @@ export function useChatStore() {
   const store = createConversationStore();
 
   const chat = useChat({
-    connection: fetchServerSentEvents("/api/chat", {
+    connection: fetchServerSentEvents("/api/chat/eu-ai-act", {
       fetchClient: resilientFetch,
     }),
-    body: {
-      state: { corpusId: "315e41aa-8657-46c0-ac4b-ea4355babf0a" },
-    },
   });
 
   // Save current messages when switching conversations
