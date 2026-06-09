@@ -12,6 +12,56 @@ function textMsg(role: "user" | "assistant", content: string): UIMessage {
   };
 }
 
+function thinkingMsg(content: string): UIMessage {
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    parts: [
+      { type: "thinking" as const, content },
+      { type: "text" as const, content: "Final answer" },
+    ],
+  };
+}
+
+function toolCallMsg(): UIMessage {
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    parts: [
+      {
+        type: "tool-call" as const,
+        id: "call-1",
+        name: "rag_search",
+        arguments: '{"query": "EU AI Act", "top_k": 5}',
+        state: "complete" as const,
+      },
+      {
+        type: "tool-result" as const,
+        toolCallId: "call-1",
+        content: "Found 3 documents about the EU AI Act",
+        state: "complete" as const,
+      },
+      { type: "text" as const, content: "Based on my search..." },
+    ],
+  };
+}
+
+function toolCallStreamingMsg(): UIMessage {
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant",
+    parts: [
+      {
+        type: "tool-call" as const,
+        id: "call-2",
+        name: "rag_search",
+        arguments: '{"query": "',
+        state: "input-streaming" as const,
+      },
+    ],
+  };
+}
+
 describe("ChatView", () => {
   it("renders user and assistant messages", () => {
     const messages = createSignal<UIMessage[]>([
@@ -251,5 +301,124 @@ describe("ChatView", () => {
 
     const dots = document.querySelectorAll(".ellipsis-indicator");
     expect(dots.length).toBe(0);
+  });
+
+  // ── Tracer bullet: ThinkingPart rendering ────────────────────────────
+
+  it("renders thinking parts in a collapsible reasoning panel", () => {
+    const messages = createSignal<UIMessage[]>([thinkingMsg("Thought process here")]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Should show a reasoning section label
+    expect(screen.getByText("Reasoned")).toBeTruthy();
+    // Should show the thinking content
+    expect(screen.getByText("Thought process here")).toBeTruthy();
+    // Should show the final text answer too
+    expect(screen.getByText("Final answer")).toBeTruthy();
+  });
+
+  it("hides thinking content when reasoning panel is collapsed", async () => {
+    const messages = createSignal<UIMessage[]>([thinkingMsg("Hidden thought")]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Content should be visible initially
+    expect(screen.getByText("Hidden thought")).toBeTruthy();
+
+    // Click the toggle to collapse
+    const toggle = screen.getByText("Reasoned");
+    fireEvent.click(toggle);
+
+    // Content should no longer be visible
+    expect(() => screen.getByText("Hidden thought")).toThrow();
+  });
+
+  // ── Tracer bullet: ToolCallPart rendering ────────────────────────────
+
+  it("renders completed tool call parts", () => {
+    const messages = createSignal<UIMessage[]>([toolCallMsg()]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Tool name should be visible
+    expect(screen.getByText("rag_search")).toBeTruthy();
+    // Tool result content should be visible
+    expect(screen.getByText("Found 3 documents about the EU AI Act")).toBeTruthy();
+    // Final text should still be visible
+    expect(screen.getByText("Based on my search...")).toBeTruthy();
+  });
+
+  it("renders streaming tool call parts with partial args", () => {
+    const messages = createSignal<UIMessage[]>([toolCallStreamingMsg()]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={true}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Tool name should be visible
+    expect(screen.getByText("rag_search")).toBeTruthy();
+    // The streaming state indicator
+    expect(screen.getByText("streaming")).toBeTruthy();
+  });
+
+  // ── Tracer bullet: empty parts ───────────────────────────────────────
+
+  it("handles messages with no parts gracefully", () => {
+    const msg: UIMessage = { id: "empty", role: "assistant", parts: [] };
+    const messages = createSignal<UIMessage[]>([msg]);
+
+    render(() => (
+      <ChatView
+        messages={messages[0]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Should not crash — role badge should show
+    expect(screen.getByText("assistant")).toBeTruthy();
   });
 });
