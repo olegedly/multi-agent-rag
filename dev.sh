@@ -7,6 +7,7 @@ cleanup() {
   docker compose -f docker-compose.base.yml -f docker-compose.dev-override.yml down
   [ -n "$BACKEND_PID" ] && kill "$BACKEND_PID" 2>/dev/null
   [ -n "$PGWEB_PID" ] && kill "$PGWEB_PID" 2>/dev/null
+  [ -n "$MCP_PID" ] && kill "$MCP_PID" 2>/dev/null
   exit 0
 }
 trap cleanup SIGINT SIGTERM
@@ -57,6 +58,15 @@ for i in $(seq 1 30); do
   fi
   sleep 1
 done
+
+# ── MCP server (SSE) ────────────────────────────────────────
+echo "Starting MCP server (SSE, port 8082)..."
+export MCP_HOST=0.0.0.0
+MCP_PORT=8082 MCP_LOG_LEVEL=WARNING \
+  uv run python -m backend.mcp_server.run_sse &
+MCP_PID=$!
+echo "MCP server SSE → http://127.0.0.1:8082/sse"
+echo "MCP server messages → http://127.0.0.1:8082/messages/"
 
 # ── Frontend (Vite) ────────────────────────────────────────
 echo "Starting frontend (Vite dev server)..."

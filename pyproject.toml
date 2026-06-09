@@ -1,16 +1,21 @@
 [project]
 name = "multi-agent-rag"
 version = "0.1.0"
-description = "A production-grade multi-agent research system built with Google ADK, MCP, and pgvector. Three specialist AI agents (Researcher, Critic, Synthesizer) collaborate via the Model Context Protocol to answer questions about MCP and ADK documentation — cited, grounded, and streamed live to a SolidJS dashboard."
+description = "Multi-agent RAG research system with pgvector knowledge bases, LangChain agent pipeline, and a SolidJS chat frontend."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "ag-ui-adk>=0.6.5",
+    "ag-ui-protocol>=0.1.19",
     "asyncpg>=0.31.0",
     "fastapi[standard-no-fastapi-cloud-cli]>=0.136.3",
+    "langchain>=1.0.0,<2.0.0",
+    "langchain-core>=1.0.0,<2.0.0",
+    "langchain-openai>=0.3.0",
+    "langsmith>=0.3.0",
     "pgvector>=0.4.2",
     "pyyaml>=6.0",
     "sqlalchemy>=2.0.50",
+    "mcp>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -24,18 +29,14 @@ test = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 filterwarnings = [
-    # ADK internals — upstream will remove BaseAgentConfig in a future release
-    "ignore:BaseAgentConfig is deprecated:DeprecationWarning",
     # TestClient / httpx — StarletteDeprecationWarning (inherits UserWarning, not DeprecationWarning)
     "ignore::UserWarning:fastapi.testclient",
-    # ADK experimental auth — works correctly, labelled experimental by upstream
-    "ignore::UserWarning:ag_ui_adk.adk_agent",
-    "ignore::UserWarning:google.adk.auth.credential_service",
 ]
 markers = ["httpx_mock: marks tests that use pytest-httpx (deselect with '-m \"not httpx_mock\"')"]
 
 [tool.pyright]
-venvPath = ".venv"
+venvPath = "."
+venv = ".venv"
 exclude = [
     "**/.git/**",
     "**/__pycache__/**",
@@ -43,6 +44,9 @@ exclude = [
     "**/node_modules/**",
 ]
 typeCheckingMode = "standard"
+reportUnusedImport = "error"
+reportUnusedVariable = "error"
+reportDuplicateImport = "error"
 
 [tool.fastapi]
 entrypoint = "backend.main:app"

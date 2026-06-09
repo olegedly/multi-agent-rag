@@ -19,12 +19,15 @@ class Settings(BaseSettings):
     embedding_base_url: str = ""
     embedding_dimensions: int = 768
 
-    # LLM provider — abstracted behind LLMClient
-    llm_provider_type: str = ""  # "anthropic" | "openai"
+    # LLM provider — passed straight to langchain_openai.ChatOpenAI
     llm_model: str = ""
     llm_api_key: str = ""
     llm_base_url: str = ""
     llm_max_tokens: int = 4096
+
+    # Cross-environment copy
+    dev_database_url: str = ""
+    supabase_direct_url: str = ""
 
     # Public demo abuse prevention
     demo_disable_budget: bool = False

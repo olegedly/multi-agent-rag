@@ -1,14 +1,10 @@
 """OpenRouter embedding client — OpenAI-compatible ``POST /v1/embeddings``.
 
-Reuses ``HttpTransport`` from the LLM layer for HTTP calls.
+Uses ``HttpTransport`` from the shared HTTP client layer.
 """
 
 from backend.embeddings.protocol import EmbeddingError
-from backend.llm.protocol import LLMError
-from backend.llm.transport import (
-    HttpTransport,  # noqa: F401 — re-exported
-    Transport,
-)
+from backend.http_client import HttpTransport, Transport, TransportError
 
 
 class OpenRouterEmbeddingClient:
@@ -73,7 +69,7 @@ class OpenRouterEmbeddingClient:
 
         try:
             response = await self._transport.send(url, headers, body)
-        except LLMError as exc:
+        except TransportError as exc:
             raise EmbeddingError(
                 status=exc.status,
                 message=str(exc),

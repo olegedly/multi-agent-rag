@@ -4,29 +4,65 @@ Three-layer defense:
   1. Caddy IP rate limiting (frontend/Caddyfile) — outermost
   2. Daily token budget (ASGI middleware) — checks /data/demo-budget.json
   3. Query validation (FastAPI middleware) — validates user message length & count
+
+Also provides :class:`TokenBudgetCallback` — a LangChain callback that wires
+output token counts from ``ChatOpenAI`` into the budget store on each LLM
+invocation.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from typing import Protocol, runtime_checkable
 from datetime import date, datetime, timezone
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.outputs import LLMResult
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-# ── Budget File Helpers ──────────────────────────────────────────────────────
+
+# ── Budget Store Protocol ────────────────────────────────────────────────────
 
 
-class BudgetFile:
-    """Read/write the daily demo token budget file.
+@runtime_checkable
+class BudgetStore(Protocol):
+    """Abstract token budget store.
+
+    Satisfied by :class:`JsonFileBudget` (file-backed, single worker) and
+    by any in-memory or Redis-backed adapter in tests or production.
+    """
+
+    daily_limit: int
+
+    def read(self) -> tuple[str, int]:
+        """Return ``(date_str, tokens_used)``."""
+        ...
+
+    def add_tokens(self, tokens: int) -> None:
+        """Accumulate *tokens* into the running total."""
+        ...
+
+    def is_exhausted(self) -> bool:
+        """Return ``True`` if the budget has been fully consumed."""
+        ...
+
+
+# ── Budget File Implementation ───────────────────────────────────────────────
+
+
+class JsonFileBudget:
+    """Read/write the daily demo token budget to a JSON file on disk.
 
     Format: {"date": "2026-06-07", "tokens": 0}
     - Lazy-created on first access.
     - Auto-reset if ``date != today``.
     - Thread-safe enough for a demo (single uvicorn worker).
+
+    Satisfies :class:`BudgetStore`.
     """
 
     def __init__(self, path: str, daily_limit: int):
@@ -67,6 +103,32 @@ def today_str() -> str:
     return date.fromtimestamp(datetime.now(timezone.utc).timestamp()).isoformat()
 
 
+# ── LangChain Token Budget Callback ──────────────────────────────────────────
+
+
+class TokenBudgetCallback(BaseCallbackHandler):
+    """LangChain callback that deducts output tokens from the daily budget.
+
+    Wire into ``ChatOpenAI(callbacks=[TokenBudgetCallback(budget_file)])``.
+    Fires after every successful LLM invocation, reading output token count
+    from ``LLMResult.llm_output["token_usage"]["completion_tokens"]``.
+
+    Does nothing when *budget_file* is ``None`` (budget disabled).
+    """
+
+    def __init__(self, budget_file: BudgetStore | None = None) -> None:
+        self.budget_file = budget_file
+
+    def on_llm_end(self, response: LLMResult, **kwargs) -> None:
+        if self.budget_file is None:
+            return
+        llm_output = response.llm_output or {}
+        token_usage = llm_output.get("token_usage") or {}
+        output_tokens = token_usage.get("completion_tokens", 0)
+        if output_tokens:
+            self.budget_file.add_tokens(output_tokens)
+
+
 # ── Chat Guard Middleware ─────────────────────────────────────────────────────
 
 
@@ -88,7 +150,7 @@ class ChatGuard(BaseHTTPMiddleware):
         app: ASGIApp,
         max_query_length: int,
         max_user_messages: int,
-        budget_file: BudgetFile | None = None,
+        budget_file: BudgetStore | None = None,
     ):
         super().__init__(app)
         self.max_query_length = max_query_length

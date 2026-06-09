@@ -1,0 +1,13 @@
+---
+type: recital
+number: 179
+title: 'Date of validity'
+slug: recitals/date-of-validity
+source: https://en.ai-act.io/recital/date-of-validity
+related_articles:
+  - title: "Article 16: Obligations of providers of high-risk AI systems"
+    slug: article/high-risk-ai-systems/obligations-of-providers-and-deployers-of-high-risk-ai-systems-and-other-parties/obligations-of-providers-of-high-risk-ai-systems
+---
+### Recital 179: Date of validity
+
+This Regulation should apply from 2 August 2026. However, taking into account the unacceptable risk associated with the use of AI in certain ways, the prohibitions as well as the general provisions of this Regulation should already apply from 2 February 2025. While the full effect of those prohibitions follows with the establishment of the governance and enforcement of this Regulation, anticipating the application of the prohibitions is important to take account of unacceptable risks and to have an effect on other procedures, such as in civil law. Moreover, the infrastructure related to the governance and the conformity assessment system should be operational before 2 August 2026, therefore the provisions on notified bodies and governance structure should apply from 2 August 2025. Given the rapid pace of technological advancements and adoption of general-purpose AI models, obligations for providers of general-purpose AI models should apply from 2 August 2025. Codes of practice should be ready by 2 May 2025 in view of enabling providers to demonstrate compliance on time. The AI Office should ensure that classification rules and procedures are up to date in light of technological developments. In addition, Member States should lay down and notify to the Commission the rules on penalties, including administrative fines, and ensure that they are properly and effectively implemented by the date of application of this Regulation. Therefore the provisions on penalties should apply from 2 August 2025.

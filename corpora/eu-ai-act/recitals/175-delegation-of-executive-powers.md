@@ -1,0 +1,14 @@
+---
+type: recital
+number: 175
+title: 'Delegation of executive powers'
+slug: recitals/delegation-of-executive-powers
+source: https://en.ai-act.io/recital/delegation-of-executive-powers
+---
+### Recital 175: Delegation of executive powers
+
+In order to ensure uniform conditions for the implementation of this Regulation, implementing powers should be conferred on the Commission. Those powers should be exercised in accordance with Regulation (EU) No 182/2011 of the European Parliament and of the Council\[1\].
+
+#### Footnotes
+
+1.  Regulation (EU) No 182/2011 of the European Parliament and of the Council of 16 February 2011 laying down the rules and general principles concerning mechanisms for control by Member States of the Commission’s exercise of implementing powers (OJ L 55, 28.2.2011, p. 13).
