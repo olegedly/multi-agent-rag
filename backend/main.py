@@ -6,10 +6,12 @@ for testing.
 
 from __future__ import annotations
 
-import json
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from ag_ui.core.events import RunErrorEvent
+from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 
@@ -91,16 +93,26 @@ def create_app(
 
         body = await request.json()
         messages = body.get("messages", [])
+        thread_id = body.get("threadId", "th-default")
+        run_id = body.get("runId", "run-default")
+
+        encoder = EventEncoder()
 
         async def _stream():
             try:
                 async for event in run_pipeline(
-                    messages, slug, corpora_config=corpora_config, settings=settings,
+                    messages,
+                    slug,
+                    corpora_config=corpora_config,
+                    settings=settings,
+                    thread_id=thread_id,
+                    run_id=run_id,
                 ):
-                    yield f"data: {json.dumps(event)}\n\n"
-                yield "data: [DONE]\n\n"
+                    yield encoder.encode(event)
             except Exception as exc:
-                yield f"data: {json.dumps({'type': 'error', 'error': {'message': str(exc)}})}\n\n"
+                yield encoder.encode(
+                    RunErrorEvent(message=str(exc), timestamp=int(time.time() * 1000))  # type: ignore[call-arg]
+                )
 
         return StreamingResponse(
             _stream(),

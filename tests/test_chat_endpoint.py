@@ -7,11 +7,18 @@ agent pipeline.
 from __future__ import annotations
 
 import json
-from typing import AsyncIterable
 import pytest
 from fastapi.testclient import TestClient
 
 from backend.corpus_config import CorporaConfig
+
+from ag_ui.core.events import (
+    RunFinishedEvent,
+    RunStartedEvent,
+    TextMessageContentEvent,
+    TextMessageEndEvent,
+    TextMessageStartEvent,
+)
 
 
 # ── Fake agent pipeline ──────────────────────────────────────────────────────
@@ -21,23 +28,20 @@ async def _fake_pipeline(
     messages: list[dict],
     corpus_slug: str,
     **kwargs,
-) -> AsyncIterable[dict]:
+):
     """A deterministic fake pipeline for testing the SSE endpoint shape."""
-    # 1. Content event
-    yield {"type": "content", "delta": "Hello", "content": "Hello", "role": "assistant"}
-    # 2. Tool call event
-    yield {
-        "type": "tool_call",
-        "toolCall": {
-            "id": "call_1",
-            "type": "function",
-            "function": {"name": "rag_search", "arguments": '{"query":"test"}', "output": "..."},
-        },
-    }
-    # 3. Another content event
-    yield {"type": "content", "delta": " World", "content": "Hello World", "role": "assistant"}
-    # 4. Done event
-    yield {"type": "done", "finishReason": "stop", "usage": {"promptTokens": 10, "completionTokens": 5}}
+    ts = 1000000
+    yield RunStartedEvent(thread_id="test-thread", run_id="test-run", timestamp=ts)
+    yield TextMessageStartEvent(message_id="msg-1", role="assistant", timestamp=ts)
+    yield TextMessageContentEvent(message_id="msg-1", delta="Hello", timestamp=ts)
+    yield TextMessageEndEvent(message_id="msg-1", timestamp=ts)
+    yield RunFinishedEvent(
+        thread_id="test-thread",
+        run_id="test-run",
+        timestamp=ts,
+        finishReason="stop",  # type: ignore[call-arg]
+        usage={"promptTokens": 10, "completionTokens": 5},  # type: ignore[call-arg]
+    )
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -98,40 +102,54 @@ class TestChatEndpoint:
         assert response.status_code == 404
 
     def test_sse_events_are_parseable(self, client):
-        """Each SSE data line should be valid JSON."""
+        """Each SSE data line should be valid JSON with an AG-UI event type."""
         response = client.post(
             "/api/chat/eu-ai-act",
             json={"messages": [{"role": "user", "content": "Hello"}]},
         )
         for line in response.text.strip().split("\n"):
-            if line.startswith("data: ") and line[6:] != "[DONE]":
+            if line.startswith("data: "):
                 data = json.loads(line[6:])
                 assert "type" in data
 
-    def test_sse_contains_content_and_done_events(self, client):
-        """The stream should contain content deltas and a done event."""
+    def test_sse_contains_ag_ui_event_types(self, client):
+        """The stream should contain AG-UI event types."""
         response = client.post(
             "/api/chat/eu-ai-act",
             json={"messages": [{"role": "user", "content": "Hello"}]},
         )
         events = []
         for line in response.text.strip().split("\n"):
-            if line.startswith("data: ") and line[6:] != "[DONE]":
+            if line.startswith("data: "):
                 events.append(json.loads(line[6:]))
 
         types = [e["type"] for e in events]
-        assert "content" in types
-        assert "done" in types
-        assert events[-1]["type"] == "done"
+        assert "RUN_STARTED" in types
+        assert "TEXT_MESSAGE_START" in types
+        assert "TEXT_MESSAGE_CONTENT" in types
+        assert "TEXT_MESSAGE_END" in types
+        assert "RUN_FINISHED" in types
+        assert events[-1]["type"] == "RUN_FINISHED"
 
-    def test_sse_ends_with_done_marker(self, client):
-        """Final line should be the [DONE] sentinel."""
+    def test_sse_event_sequence(self, client):
+        """Events should appear in correct AG-UI order."""
         response = client.post(
             "/api/chat/eu-ai-act",
             json={"messages": [{"role": "user", "content": "Hello"}]},
         )
-        lines = response.text.strip().split("\n")
-        assert lines[-1].strip() == "data: [DONE]"
+        events = []
+        for line in response.text.strip().split("\n"):
+            if line.startswith("data: "):
+                events.append(json.loads(line[6:]))
+
+        types = [e["type"] for e in events]
+        assert types == [
+            "RUN_STARTED",
+            "TEXT_MESSAGE_START",
+            "TEXT_MESSAGE_CONTENT",
+            "TEXT_MESSAGE_END",
+            "RUN_FINISHED",
+        ]
     # ── ChatGuard middleware still active ──────────────────────────────────
 
     def test_middleware_still_blocks_long_messages(self, client):

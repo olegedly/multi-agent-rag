@@ -5,6 +5,7 @@ description = "Multi-agent RAG research system with pgvector knowledge bases, La
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "ag-ui-protocol>=0.1.19",
     "asyncpg>=0.31.0",
     "fastapi[standard-no-fastapi-cloud-cli]>=0.136.3",
     "langchain>=1.0.0,<2.0.0",

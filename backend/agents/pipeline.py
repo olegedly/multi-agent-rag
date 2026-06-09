@@ -1,4 +1,4 @@
-"""LangChain agent pipeline: Researcher → Critic → Synthesizer.
+"""LangChain agent pipeline: Researcher -> Critic -> Synthesizer.
 
 The pipeline runs a single-agent ``create_agent`` with RAG tools for
 the Researcher role.  Future iterations will layer in the Critic and
@@ -7,7 +7,8 @@ Synthesizer after the initial results are gathered.
 
 from __future__ import annotations
 
-from typing import AsyncIterable
+import time
+from uuid import uuid4
 
 from langchain_core.messages import (
     AIMessage,
@@ -18,6 +19,17 @@ from langchain_core.messages import (
 )
 
 from backend.corpus_config import CorporaConfig
+
+# ---------------------------------------------------------------------------
+# AG-UI protocol events
+# ---------------------------------------------------------------------------
+from ag_ui.core.events import (
+    RunFinishedEvent,
+    RunStartedEvent,
+    TextMessageContentEvent,
+    TextMessageEndEvent,
+    TextMessageStartEvent,
+)
 
 
 def _convert_dict_messages(messages: list[dict]) -> list[BaseMessage]:
@@ -46,8 +58,10 @@ async def run_pipeline(
     corpus_slug: str,
     corpora_config: CorporaConfig,
     settings=None,
-) -> AsyncIterable[dict]:
-    """Run Researcher → Critic → Synthesizer.  Yields TanStack SSE events.
+    thread_id: str = "th-default",
+    run_id: str = "run-default",
+):
+    """Run Researcher -> Critic -> Synthesizer.  Yields AG-UI protocol events.
 
     Parameters
     ----------
@@ -59,11 +73,16 @@ async def run_pipeline(
         Resolves the slug to a corpus UUID and metadata.
     settings : Settings, optional
         App settings for LLM config.  Created lazily if ``None``.
+    thread_id : str
+        Thread identifier from the frontend.
+    run_id : str
+        Run identifier from the frontend.
 
     Yields
     ------
-    dict
-        TanStack AI SSE event dicts: ``content``, ``tool_call``, ``done``.
+    Pydantic AG-UI event models (serializable via ``EventEncoder.encode``):
+        RunStartedEvent, TextMessageStartEvent, TextMessageContentEvent,
+        TextMessageEndEvent, RunFinishedEvent, or RunErrorEvent.
     """
     corpus = corpora_config.get(corpus_slug)
     if corpus is None:
@@ -107,6 +126,11 @@ async def run_pipeline(
 
     lc_messages = _convert_dict_messages(messages)
 
+    message_id = str(uuid4())
+    ts = int(time.time() * 1000)
+
+    yield RunStartedEvent(thread_id=thread_id, run_id=run_id, timestamp=ts)
+
     result = await agent.ainvoke(
         {"messages": lc_messages},  # type: ignore[arg-type]
         config={"recursion_limit": 25},
@@ -118,15 +142,14 @@ async def run_pipeline(
         content = last_msg.content
 
     if content:
-        yield {
-            "type": "content",
-            "delta": content,
-            "content": content,
-            "role": "assistant",
-        }
+        yield TextMessageStartEvent(message_id=message_id, role="assistant", timestamp=ts)
+        yield TextMessageContentEvent(message_id=message_id, delta=content, timestamp=ts)
+        yield TextMessageEndEvent(message_id=message_id, timestamp=ts)
 
-    yield {
-        "type": "done",
-        "finishReason": "stop",
-        "usage": {"promptTokens": 0, "completionTokens": 0},
-    }
+    yield RunFinishedEvent(
+        thread_id=thread_id,
+        run_id=run_id,
+        timestamp=ts,
+        finishReason="stop",  # type: ignore[call-arg]
+        usage={"promptTokens": 0, "completionTokens": 0},  # type: ignore[call-arg]
+    )
