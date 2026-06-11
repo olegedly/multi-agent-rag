@@ -1,4 +1,5 @@
 import { For, Show, createSignal, createEffect, onMount } from "solid-js";
+import { SolidMarkdown } from "solid-markdown";
 import type {
   UIMessage,
   MessagePart,
@@ -222,7 +223,11 @@ function PartRenderer(props: { part: MessagePart }) {
 // ── Text part (existing behavior) ─────────────────────────────────────────
 
 function TextPartRenderer(props: { part: TextPart }) {
-  return <p class="text-sm whitespace-pre-wrap">{props.part.content}</p>;
+  return (
+    <div class="prose prose-sm max-w-none text-(--text-primary) leading-relaxed">
+      <SolidMarkdown children={props.part.content} />
+    </div>
+  );
 }
 
 // ── Thinking/reasoning part (collapsible) ─────────────────────────────────

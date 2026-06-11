@@ -84,9 +84,10 @@ async def run_pipeline(
     if corpus is None:
         return
 
+    from langchain.agents import create_agent
+
     from backend.agents.langchain_tools import create_rag_tools
     from backend.middleware import JsonFileBudget, TokenBudgetCallback
-    from langchain.agents import create_agent
 
     tools = create_rag_tools(corpus_id=corpus.id)
 
@@ -124,6 +125,7 @@ async def run_pipeline(
             "3. Always cite your sources (corpus name + content excerpts + chunk IDs).\n"
             "4. If a search returns no results, say so — do not invent facts.\n"
             "5. Never answer from your own pre-training knowledge — base every claim on a retrieved chunk."
+            "6. Do no more than 4 tools calls per query. Stop when you have enough, and produce the response."
         ),
     )
 
