@@ -17,6 +17,9 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
+# The monkey-patch for reasoning_content is in ``backend/agents/__init__.py``
+# and runs automatically when this module is imported (agents is a parent pkg).
+
 from backend.agents.stream_handler import StreamEventHandler
 from backend.corpus_config import CorporaConfig
 
