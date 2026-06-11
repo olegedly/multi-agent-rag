@@ -249,10 +249,26 @@ function ToolResultPartRenderer(props: {
       >
         <div class="mt-1">
           <div class="text-xs text-(--text-secondary) font-mono whitespace-pre-wrap leading-relaxed max-h-75 overflow-y-auto">
-            {formatToolResult(props.part.content)}
+            {renderToolResultContent(props.part.content, props.part.state)}
           </div>
         </div>
       </CollapsibleSection>
     </div>
   );
+}
+
+/**
+ * Renders tool result content. Only applies YAML formatting when the
+ * result has finished streaming (state is 'complete' or 'error').
+ * During streaming, raw content is shown as-is.
+ */
+function renderToolResultContent(
+  content: string | unknown[],
+  state: string,
+): string {
+  if (state === "complete" || state === "error") {
+    return formatToolResult(content);
+  }
+  // Still streaming — show raw content without YAML conversion
+  return typeof content === "string" ? content : JSON.stringify(content, null, 2);
 }

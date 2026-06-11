@@ -252,4 +252,190 @@ describe("MessagePartRenderer", () => {
     expect(screen.getByText("search")).toBeTruthy();
     expect(screen.getByText("read")).toBeTruthy();
   });
+
+  // ── Streaming vs complete: YAML conversion timing ────────────────
+
+  it("renders streaming tool result content as raw text, not YAML", () => {
+    // A streaming result with JSON content — should show raw, not YAML
+    const msg: UIMessage = {
+      id: "m1",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-stream",
+          name: "rag_search",
+          arguments: "{}",
+          state: "input-streaming" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-stream",
+          content: '{"results": [{"score": 0.95}]}',
+          state: "streaming" as const,
+        },
+      ],
+    };
+
+    render(() => (
+      <MessagePartRenderer
+        msg={msg}
+        isLoading={true}
+        nextToolCallTick={0}
+      />
+    ));
+
+    const all = document.body.textContent || "";
+    // Streaming — should show the raw JSON, not YAML
+    expect(all).toContain('"results"');
+    expect(all).toContain('"score"');
+    // Should NOT have YAML keys
+    expect(all).not.toContain("results:");
+  });
+
+  it("renders completed tool result content as YAML", () => {
+    // Same JSON content but complete state — should be YAML
+    const msg: UIMessage = {
+      id: "m1",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-done",
+          name: "rag_search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-done",
+          content: '{"results": [{"score": 0.95}]}',
+          state: "complete" as const,
+        },
+      ],
+    };
+
+    render(() => (
+      <MessagePartRenderer
+        msg={msg}
+        isLoading={false}
+        nextToolCallTick={0}
+      />
+    ));
+
+    const all = document.body.textContent || "";
+    // Complete — should show YAML
+    expect(all).toContain("results:");
+    expect(all).toContain("score: 0.95");
+    // Should NOT have raw JSON keys
+    expect(all).not.toContain('"results"');
+  });
+
+  it("renders error state tool result content as YAML", () => {
+    const msg: UIMessage = {
+      id: "m1",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-err",
+          name: "rag_search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-err",
+          content: '{"error": "Rate limited", "code": 429}',
+          state: "error" as const,
+          error: "Rate limited",
+        },
+      ],
+    };
+
+    render(() => (
+      <MessagePartRenderer
+        msg={msg}
+        isLoading={false}
+        nextToolCallTick={0}
+      />
+    ));
+
+    const all = document.body.textContent || "";
+    // Error is terminal — should show YAML
+    expect(all).toContain("error: Rate limited");
+    expect(all).toContain("code: 429");
+  });
+
+  it("transitions from raw text to YAML when result becomes complete", () => {
+    // Simulate streaming: a tool result arriving in streaming state,
+    // then being replaced by a complete version.
+    const msg = createSignal({
+      id: "m1",
+      role: "assistant" as const,
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "rag_search",
+          arguments: "{}",
+          state: "input-streaming" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: '{"score": 0.95}',
+          state: "streaming" as const,
+        },
+      ],
+    });
+
+    // Render the streaming version directly — Index+For don't apply here
+    const { unmount } = render(() => (
+      <MessagePartRenderer
+        msg={msg[0]()}
+        isLoading={true}
+        nextToolCallTick={0}
+      />
+    ));
+
+    let bodyText = document.body.textContent || "";
+    expect(bodyText).toContain('"score"');
+    expect(bodyText).not.toContain("score: 0.95");
+
+    // Unmount and re-render with complete version
+    unmount();
+
+    const complete: UIMessage = {
+      id: "m1",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "rag_search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: '{"score": 0.95}',
+          state: "complete" as const,
+        },
+      ],
+    };
+
+    render(() => (
+      <MessagePartRenderer
+        msg={complete}
+        isLoading={false}
+        nextToolCallTick={0}
+      />
+    ));
+
+    bodyText = document.body.textContent || "";
+    expect(bodyText).toContain("score: 0.95");
+    expect(bodyText).not.toContain('"score"');
+  });
 });
