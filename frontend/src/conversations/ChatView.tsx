@@ -1,4 +1,4 @@
-import { For, Show, createSignal, createEffect, onMount } from "solid-js";
+import { For, Show, createSignal, createEffect, onMount, onCleanup } from "solid-js";
 import { SolidMarkdown } from "solid-markdown";
 import type {
   UIMessage,
@@ -413,27 +413,82 @@ function jsonToYaml(value: unknown, indent: number = 0): string {
     .join("\n");
 }
 
-// ── Tool result part ──────────────────────────────────────────────────────
+// ── Tool result part (collapsible with auto-collapse after 1.5s) ────────
 
 function ToolResultPartRenderer(props: { part: ToolResultPart }) {
+  const [expanded, setExpanded] = createSignal(true);
+  let userInteracted = false;
+  let timerRef: number | undefined;
+
+  onMount(() => {
+    timerRef = window.setTimeout(() => {
+      if (!userInteracted) {
+        setExpanded(false);
+      }
+    }, 1500);
+  });
+
+  onCleanup(() => {
+    if (timerRef !== undefined) clearTimeout(timerRef);
+  });
+
+  const toggle = () => {
+    // First user interaction — disable auto-collapse permanently
+    if (!userInteracted) {
+      userInteracted = true;
+      if (timerRef !== undefined) {
+        clearTimeout(timerRef);
+        timerRef = undefined;
+      }
+    }
+    setExpanded(!expanded());
+  };
+
   return (
-    <div class="mb-2 flex items-start gap-2">
-      {/* Result icon */}
-      <svg
-        xmlns="http://www.w3.org/2000/svg"
-        class="h-3.5 w-3.5 mt-0.5 shrink-0 text-green-400"
-        viewBox="0 0 20 20"
-        fill="currentColor"
+    <div class="mb-2">
+      {/* Header row: checkmark + label + chevron */}
+      <button
+        onClick={toggle}
+        class="flex items-center gap-1.5 text-xs font-medium text-(--text-secondary) hover:text-(--accent) transition-colors cursor-pointer w-full text-left"
       >
-        <path
-          fill-rule="evenodd"
-          d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-          clip-rule="evenodd"
-        />
-      </svg>
-      <div class="flex-1 min-w-0">
-        <div class="text-xs text-(--text-secondary) font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
-          {formatToolResult(props.part.content)}
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          class="h-3.5 w-3.5 shrink-0 text-green-400"
+          viewBox="0 0 20 20"
+          fill="currentColor"
+        >
+          <path
+            fill-rule="evenodd"
+            d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+            clip-rule="evenodd"
+          />
+        </svg>
+        <span>Result</span>
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          class={`h-3 w-3 ml-auto transition-transform duration-200 ${expanded() ? "rotate-90" : ""}`}
+          viewBox="0 0 20 20"
+          fill="currentColor"
+        >
+          <path
+            fill-rule="evenodd"
+            d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
+            clip-rule="evenodd"
+          />
+        </svg>
+      </button>
+      {/* Collapsible body */}
+      <div
+        class="overflow-hidden transition-all duration-300 ease-in-out"
+        style={{
+          "max-height": expanded() ? "250px" : "0px",
+          opacity: expanded() ? 1 : 0,
+        }}
+      >
+        <div class="mt-1 pl-5">
+          <div class="text-xs text-(--text-secondary) font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
+            {formatToolResult(props.part.content)}
+          </div>
         </div>
       </div>
     </div>
