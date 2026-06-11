@@ -224,7 +224,7 @@ function PartRenderer(props: { part: MessagePart }) {
 
 function TextPartRenderer(props: { part: TextPart }) {
   return (
-    <div class="prose prose-sm max-w-none text-(--text-primary) leading-relaxed">
+    <div class="prose prose-sm max-w-none">
       <SolidMarkdown children={props.part.content} />
     </div>
   );
