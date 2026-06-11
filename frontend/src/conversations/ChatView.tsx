@@ -1,5 +1,6 @@
 import {
   For,
+  Index,
   Show,
   on,
   createSignal,
@@ -30,12 +31,12 @@ interface ChatViewProps {
 
 // ── Part grouping — pair each tool-call with its matching result ────────
 
-type SoloItem = { type: "solo"; part: MessagePart };
-type PairItem = {
+interface SoloItem { type: "solo"; part: MessagePart }
+interface PairItem {
   type: "pair";
   toolCall: ToolCallPart;
   toolResult: ToolResultPart | null;
-};
+}
 type GroupItem = SoloItem | PairItem;
 
 function groupParts(parts: MessagePart[]): GroupItem[] {
@@ -79,58 +80,48 @@ export function ChatView(props: ChatViewProps) {
   let textareaRef: HTMLTextAreaElement | undefined;
   let isUserAtBottom = true;
 
-  // Track which tool result parts are "new" (appeared during current load)
-  let seenToolPartKeys = new Set<string>();
-  let wasLoadingForKeys = false;
+  // Persistent accumulator of all tool-result keys ever seen during this
+  // component's lifetime. Unlike the snapshot approach, this doesn't
+  // reset on every loading transition — it only grows, so a previously-
+  // seen result stays "old" even if its component is recreated.
+  const seenToolPartKeys = new Set<string>();
 
-  // Signal that ticks when a new tool-call appears during loading.
-  // ToolResultPartRenderers watch this to collapse when the next call starts.
+  // Signal that ticks when an unpaired tool-call (no result yet) appears
+  // during loading. ToolResultPartRenderers watch this to collapse
+  // existing results when a new call starts.
   const [nextToolCallTick, setNextToolCallTick] = createSignal(0);
 
-  let prevToolCallCount = 0;
+  // Track unpaired tool-call count — only unpaired calls should trigger
+  // a collapse, because paired calls already have their result.
+  let prevUnpairedCallCount = 0;
   createEffect(() => {
     if (!props.isLoading) return;
     let count = 0;
     for (const msg of props.messages()) {
       for (const part of msg.parts) {
-        if (part.type === "tool-call") count++;
-      }
-    }
-    if (count > prevToolCallCount) {
-      setNextToolCallTick((t) => t + 1);
-    }
-    prevToolCallCount = count;
-  });
-
-  const isNewToolResult = (msgId: string, toolCallId: string): boolean => {
-    if (props.isLoading) {
-      return !seenToolPartKeys.has(`${msgId}:${toolCallId}`);
-    }
-    return false;
-  };
-
-  // Snapshot current tool-result keys on mount and at each loading→start
-  // transition, so previously-seen results don't get the auto-collapse.
-  let didInitialSnapshot = false;
-  createEffect(() => {
-    const loading = props.isLoading;
-    if (!didInitialSnapshot) {
-      didInitialSnapshot = true;
-    } else if (wasLoadingForKeys === loading) {
-      return;
-    }
-    wasLoadingForKeys = loading;
-
-    const keys = new Set<string>();
-    for (const msg of props.messages()) {
-      for (const part of msg.parts) {
-        if (part.type === "tool-result") {
-          keys.add(`${msg.id}:${part.toolCallId}`);
+        if (part.type === "tool-call") {
+          // Check if this call has a result yet by looking ahead or at
+          // the seenToolPartKeys set
+          const key = `${msg.id}:${part.id}`;
+          if (!seenToolPartKeys.has(key)) {
+            count++;
+          }
         }
       }
     }
-    seenToolPartKeys = keys;
+    if (count > prevUnpairedCallCount) {
+      setNextToolCallTick((t) => t + 1);
+    }
+    prevUnpairedCallCount = count;
   });
+
+  const isNewToolResult = (msgId: string, toolCallId: string): boolean => {
+    if (!props.isLoading) return false;
+    const key = `${msgId}:${toolCallId}`;
+    if (seenToolPartKeys.has(key)) return false;
+    seenToolPartKeys.add(key);
+    return true;
+  };
 
   const handleScroll = () => {
     const el = scrollContainerRef;
@@ -238,9 +229,13 @@ export function ChatView(props: ChatViewProps) {
                 <div class="text-xs font-medium mb-1 opacity-70 capitalize">
                   {msg.role}
                 </div>
-                <For each={groupParts(msg.parts)}>
-                  {(item) =>
-                    item.type === "pair" ? (
+                {/* Use Index (position-based reconciliation) so that existing
+                    ToolResultPartRenderer instances survive when new parts
+                    are appended to the message during streaming. */}
+                <Index each={groupParts(msg.parts)}>
+                  {(getItem) => {
+                    const item = getItem();
+                    return item.type === "pair" ? (
                       <ToolCallPairRenderer
                         toolCall={item.toolCall}
                         toolResult={item.toolResult}
@@ -258,9 +253,9 @@ export function ChatView(props: ChatViewProps) {
                         msgId={msg.id}
                         isNewToolResult={false}
                       />
-                    )
-                  }
-                </For>
+                    );
+                  }}
+                </Index>
               </div>
             </div>
           )}

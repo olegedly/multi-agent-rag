@@ -639,7 +639,6 @@ describe("ChatView", () => {
       />
     ));
 
-    // Simulate tool result streaming in while loading
     const msg: UIMessage = {
       id: crypto.randomUUID(),
       role: "assistant",
@@ -660,8 +659,6 @@ describe("ChatView", () => {
       ],
     };
     setMsgs([msg]);
-
-    // The tool result should be expanded (it's new, arrived during loading)
     expectToolResultState("Hello from tool!", true);
   });
 
@@ -686,7 +683,6 @@ describe("ChatView", () => {
         { type: "text" as const, content: "Finished" },
       ],
     };
-
     render(() => (
       <ChatView
         messages={() => [msg]}
@@ -698,8 +694,6 @@ describe("ChatView", () => {
         onDismissStorageError={() => {}}
       />
     ));
-
-    // Should start collapsed (not new — loaded from storage)
     expectToolResultState("Old result from storage", false);
   });
 
@@ -724,7 +718,6 @@ describe("ChatView", () => {
         { type: "text" as const, content: "Finished" },
       ],
     };
-
     const newMsg: UIMessage = {
       id: crypto.randomUUID(),
       role: "assistant",
@@ -744,10 +737,8 @@ describe("ChatView", () => {
         },
       ],
     };
-
     const [msgs, setMsgs] = createSignal<UIMessage[]>([existingMsg]);
     const [loading, setLoading] = createSignal(false);
-
     render(() => (
       <ChatView
         messages={msgs}
@@ -759,21 +750,428 @@ describe("ChatView", () => {
         onDismissStorageError={() => {}}
       />
     ));
-
-    // Old result should start collapsed
     expectToolResultState("Old result", false);
-
-    // Now: loading transitions to true, then messages arrive
     setLoading(true);
-
     return new Promise<void>((resolve) => {
       queueMicrotask(() => {
         setMsgs([existingMsg, newMsg]);
-
-        // The new result should be expanded
         expectToolResultState("Brand new result", true);
         resolve();
       });
     });
+  });
+
+  // ── Bug: chaotic expansion with multiple sequential tool calls ────
+
+  it("does not re-expand previous result when a second tool-call arrives (same message)", () => {
+    const [msgs, setMsgs] = createSignal<UIMessage[]>([]);
+
+    render(() => (
+      <ChatView
+        messages={msgs}
+        isLoading={true}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Step 1: first tool-call with result arrives
+    const step1: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: "First result",
+          state: "complete" as const,
+        },
+      ],
+    };
+    setMsgs([step1]);
+
+    expectToolResultState("First result", true);
+
+    // Step 2: second tool-call with result arrives, appended to same msg
+    const step2: UIMessage = {
+      id: step1.id,
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: "First result",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-call" as const,
+          id: "call-2",
+          name: "read",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-2",
+          content: "Second result",
+          state: "complete" as const,
+        },
+      ],
+    };
+    setMsgs([step2]);
+
+    // First result should be collapsed (nextToolCallTick collapsed it when
+    // call-2 appeared). Second result should be expanded (new during loading).
+    expectToolResultState("Second result", true);
+  });
+
+  it("does not collapse results that arrive already paired with their calls", () => {
+    const [msgs, setMsgs] = createSignal<UIMessage[]>([]);
+
+    render(() => (
+      <ChatView
+        messages={msgs}
+        isLoading={true}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Two tool-calls with their results arrive together in one batch
+    const msg: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: "First result",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-call" as const,
+          id: "call-2",
+          name: "read",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-2",
+          content: "Second result",
+          state: "complete" as const,
+        },
+      ],
+    };
+    setMsgs([msg]);
+
+    // Both should be expanded — they're new during loading
+    expectToolResultState("First result", true);
+    expectToolResultState("Second result", true);
+  });
+
+  it("collapses paired results only when a truly unpaired tool-call appears", () => {
+    const [msgs, setMsgs] = createSignal<UIMessage[]>([]);
+
+    render(() => (
+      <ChatView
+        messages={msgs}
+        isLoading={true}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Step 1: paired call+result arrive
+    const step1: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: "First result",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-call" as const,
+          id: "call-2",
+          name: "read",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-2",
+          content: "Second result",
+          state: "complete" as const,
+        },
+      ],
+    };
+    setMsgs([step1]);
+
+    expectToolResultState("First result", true);
+    expectToolResultState("Second result", true);
+
+    // Step 2: new UNPAIRED tool-call arrives (no result)
+    const step2: UIMessage = {
+      id: step1.id,
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: "First result",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-call" as const,
+          id: "call-2",
+          name: "read",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-2",
+          content: "Second result",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-call" as const,
+          id: "call-3",
+          name: "another",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+      ],
+    };
+    setMsgs([step2]);
+
+    // Both should now be collapsed — a new unpaired call arrived
+    expectToolResultState("First result", false);
+    expectToolResultState("Second result", false);
+  });
+
+  it("does not collapse result when first tool-call arrives alone then result arrives later", () => {
+    const [msgs, setMsgs] = createSignal<UIMessage[]>([]);
+
+    render(() => (
+      <ChatView
+        messages={msgs}
+        isLoading={true}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Step 1: first tool-call alone (no result yet)
+    const step1: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+      ],
+    };
+    setMsgs([step1]);
+
+    // No result to check yet
+
+    // Step 2: result arrives for call-1, and a new call-2 appears too
+    const step2: UIMessage = {
+      id: step1.id,
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: "First result",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-call" as const,
+          id: "call-2",
+          name: "read",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+      ],
+    };
+    setMsgs([step2]);
+
+    // First result arrived in same batch as call-2. The pairing means
+    // call-1 is resolved by its result, but call-2 is unresolved.
+    // The result should STILL be expanded (it's new during loading, and
+    // the only truly new tool-call — call-2 — is part of the same batch).
+    expectToolResultState("First result", true);
+  });
+
+  it("key stability: does not re-render previously collapsed results as expanded", () => {
+    const [msgs, setMsgs] = createSignal<UIMessage[]>([]);
+
+    const { container } = render(() => (
+      <ChatView
+        messages={msgs}
+        isLoading={true}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Step 1: single paired call+result
+    const step1: UIMessage = {
+      id: "msg-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: "First result",
+          state: "complete" as const,
+        },
+      ],
+    };
+    setMsgs([step1]);
+    expectToolResultState("First result", true);
+
+    // Step 2: unpaired call-2 arrives
+    const step2: UIMessage = {
+      id: "msg-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: "First result",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-call" as const,
+          id: "call-2",
+          name: "read",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+      ],
+    };
+    setMsgs([step2]);
+    expectToolResultState("First result", false);
+
+    // Step 3: result for call-2 arrives
+    const step3: UIMessage = {
+      id: "msg-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "search",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: "First result",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-call" as const,
+          id: "call-2",
+          name: "read",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-2",
+          content: "Second result",
+          state: "complete" as const,
+        },
+      ],
+    };
+    setMsgs([step3]);
+
+    // First result should stay collapsed (it was collapsed and shouldn't re-expand)
+    expectToolResultState("First result", false);
+    // Second result should be expanded (new, during loading)
+    expectToolResultState("Second result", true);
   });
 });
