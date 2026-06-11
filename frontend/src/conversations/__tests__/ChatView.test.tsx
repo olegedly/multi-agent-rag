@@ -350,8 +350,9 @@ describe("ChatView", () => {
     const toggle = screen.getByText("Reasoned");
     fireEvent.click(toggle);
 
-    // Content should no longer be visible
-    expect(() => screen.getByText("Hidden thought")).toThrow();
+    // Content hidden via CSS transition — check the wrapper class
+    const wrapper = screen.getByText("Hidden thought").closest('[class*="overflow-hidden"]')!;
+    expect(wrapper.className).toContain("opacity-0");
   });
 
   // ── Tracer bullet: ToolCallPart rendering ────────────────────────────
