@@ -36,6 +36,8 @@ export function useChatStore() {
       chat.stop();
     }
     saveCurrent();
+    // Clear messages (and error state) before loading saved messages
+    chat.setMessages([]);
     store.switchTo(id);
     const msgs = store.getCurrentMessages();
     chat.setMessages(msgs);

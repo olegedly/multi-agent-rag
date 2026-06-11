@@ -27,6 +27,44 @@ interface ChatViewProps {
   onDismissStorageError: () => void;
 }
 
+// ── Part grouping — pair each tool-call with its matching result ────────
+
+type SoloItem = { type: "solo"; part: MessagePart };
+type PairItem = {
+  type: "pair";
+  toolCall: ToolCallPart;
+  toolResult: ToolResultPart | null;
+};
+type GroupItem = SoloItem | PairItem;
+
+function groupParts(parts: MessagePart[]): GroupItem[] {
+  const result: GroupItem[] = [];
+  let i = 0;
+  while (i < parts.length) {
+    const part = parts[i];
+    if (part.type !== "tool-call") {
+      result.push({ type: "solo", part });
+      i++;
+      continue;
+    }
+
+    // Look ahead for a tool-result with matching toolCallId
+    const next = parts[i + 1];
+    if (
+      next &&
+      next.type === "tool-result" &&
+      next.toolCallId === part.id
+    ) {
+      result.push({ type: "pair", toolCall: part, toolResult: next });
+      i += 2;
+    } else {
+      result.push({ type: "pair", toolCall: part, toolResult: null });
+      i++;
+    }
+  }
+  return result;
+}
+
 function isDesktop(): boolean {
   return (
     !("ontouchstart" in window) && window.matchMedia("(pointer: fine)").matches
@@ -44,8 +82,26 @@ export function ChatView(props: ChatViewProps) {
   let seenToolPartKeys = new Set<string>();
   let wasLoadingForKeys = false;
 
+  // Signal that ticks when a new tool-call appears during loading.
+  // ToolResultPartRenderers watch this to collapse when the next call starts.
+  const [nextToolCallTick, setNextToolCallTick] = createSignal(0);
+
+  let prevToolCallCount = 0;
+  createEffect(() => {
+    if (!props.isLoading) return;
+    let count = 0;
+    for (const msg of props.messages()) {
+      for (const part of msg.parts) {
+        if (part.type === "tool-call") count++;
+      }
+    }
+    if (count > prevToolCallCount) {
+      setNextToolCallTick((t) => t + 1);
+    }
+    prevToolCallCount = count;
+  });
+
   const isNewToolResult = (msgId: string, toolCallId: string): boolean => {
-    // If loading is active, any result not seen before loading started is new
     if (props.isLoading) {
       return !seenToolPartKeys.has(`${msgId}:${toolCallId}`);
     }
@@ -54,16 +110,12 @@ export function ChatView(props: ChatViewProps) {
 
   // Snapshot current tool-result keys on mount and at each loading→start
   // transition, so previously-seen results don't get the auto-collapse.
-  // Snapshot current tool-result keys on mount (so saved conversations
-  // don't auto-collapse) and at each loading→start transition.
   let didInitialSnapshot = false;
   createEffect(() => {
     const loading = props.isLoading;
     if (!didInitialSnapshot) {
       didInitialSnapshot = true;
-      // Fall through to snapshot on first run regardless of loading state
     } else if (wasLoadingForKeys === loading) {
-      // No loading-state transition — nothing to snapshot
       return;
     }
     wasLoadingForKeys = loading;
@@ -183,18 +235,28 @@ export function ChatView(props: ChatViewProps) {
                 <div class="text-xs font-medium mb-1 opacity-70 capitalize">
                   {msg.role}
                 </div>
-                <For each={msg.parts}>
-                  {(part) => (
-                    <PartRenderer
-                      part={part}
-                      msgId={msg.id}
-                      isNewToolResult={
-                        part.type === "tool-result"
-                          ? isNewToolResult(msg.id, part.toolCallId)
-                          : false
-                      }
-                    />
-                  )}
+                <For each={groupParts(msg.parts)}>
+                  {(item) =>
+                    item.type === "pair" ? (
+                      <ToolCallPairRenderer
+                        toolCall={item.toolCall}
+                        toolResult={item.toolResult}
+                        msgId={msg.id}
+                        isNewToolResult={
+                          item.toolResult
+                            ? isNewToolResult(msg.id, item.toolResult.toolCallId)
+                            : false
+                        }
+                        nextToolCallTick={nextToolCallTick()}
+                      />
+                    ) : (
+                      <PartRenderer
+                        part={item.part}
+                        msgId={msg.id}
+                        isNewToolResult={false}
+                      />
+                    )
+                  }
                 </For>
               </div>
             </div>
@@ -274,7 +336,7 @@ export function ChatView(props: ChatViewProps) {
   );
 }
 
-// ── Part renderer ──────────────────────────────────────────────────────────
+// ── Part renderer (for solo parts) ──────────────────────────────────────
 
 function PartRenderer(props: {
   part: MessagePart;
@@ -287,9 +349,6 @@ function PartRenderer(props: {
       {props.part.type === "thinking" && (
         <ThinkingPartRenderer part={props.part} />
       )}
-      {props.part.type === "tool-call" && (
-        <ToolCallPartRenderer part={props.part} />
-      )}
       {props.part.type === "tool-result" && (
         <ToolResultPartRenderer
           part={props.part}
@@ -300,7 +359,32 @@ function PartRenderer(props: {
   );
 }
 
-// ── Text part (existing behavior) ─────────────────────────────────────────
+// ── Tool call + result pair (rendered as one visual block) ──────────────
+
+function ToolCallPairRenderer(props: {
+  toolCall: ToolCallPart;
+  toolResult: ToolResultPart | null;
+  msgId: string;
+  isNewToolResult: boolean;
+  nextToolCallTick: number;
+}) {
+  return (
+    <div class="mt-2 mb-2">
+      <ToolCallPartRenderer part={props.toolCall} />
+      <Show when={props.toolResult}>
+        {(tr) => (
+          <ToolResultPartRenderer
+            part={tr()}
+            isNew={props.isNewToolResult}
+            nextToolCallTick={props.nextToolCallTick}
+          />
+        )}
+      </Show>
+    </div>
+  );
+}
+
+// ── Text part ────────────────────────────────────────────────────────────
 
 function TextPartRenderer(props: { part: TextPart }) {
   return (
@@ -324,7 +408,6 @@ function ThinkingPartRenderer(props: { part: ThinkingPart }) {
         onClick={() => setExpanded(!expanded())}
         class="flex items-center gap-1.5 text-xs font-medium text-(--text-secondary) hover:text-(--accent) transition-colors cursor-pointer"
       >
-        {/* Collapse/expand chevron */}
         <svg
           xmlns="http://www.w3.org/2000/svg"
           class={`h-3.5 w-3.5 transition-transform ${expanded() ? "rotate-90" : ""}`}
@@ -361,8 +444,7 @@ const TOOL_CALL_LABELS: Record<string, string> = {
 
 function ToolCallPartRenderer(props: { part: ToolCallPart }) {
   return (
-    <div class="mt-4 mb-2 flex items-start gap-2 text-xs">
-      {/* Tool icon */}
+    <div class="flex items-start gap-2 text-xs">
       <svg
         xmlns="http://www.w3.org/2000/svg"
         class="h-3.5 w-3.5 mt-0.5 shrink-0 text-(--accent)"
@@ -419,12 +501,10 @@ function formatToolResult(content: string | Array<any>): string {
     return JSON.stringify(content, null, 2);
   }
 
-  // Try to parse as JSON and render as YAML. Fall back to raw string.
   try {
     const parsed = JSON.parse(content);
     return jsonToYaml(parsed);
   } catch {
-    // Not JSON — show as-is
     return content;
   }
 }
@@ -435,14 +515,11 @@ function jsonToYaml(value: unknown, indent: number = 0): string {
   if (value === null || value === undefined) return "null";
 
   if (typeof value === "string") {
-    // RAG content often contains literal \n sequences — treat as newlines
     const clean = value.replace(/\\n/g, "\n");
-    // Multi-line block scalar
     if (clean.includes("\n")) {
       const lines = clean.split("\n");
       return `|\n${pad}  ${lines.join(`\n${pad}  `)}`;
     }
-    // Unquoted scalar if it's a simple word; otherwise quoted
     if (
       /^[a-zA-Z0-9_/.\- ]+$/.test(clean) &&
       !/^[\-:?\[\]{}#,|>!@&*'"%`]/.test(clean)
@@ -475,7 +552,6 @@ function jsonToYaml(value: unknown, indent: number = 0): string {
     return items.join("\n");
   }
 
-  // Plain object
   const entries = Object.entries(value as Record<string, unknown>);
   if (entries.length === 0) return "{}";
   return entries
@@ -490,19 +566,18 @@ function jsonToYaml(value: unknown, indent: number = 0): string {
       ) {
         return `${pad}${keyStr}: ${rendered}`;
       }
-      // Object or array — value renders on subsequent lines
       return `${pad}${keyStr}:\n${rendered}`;
     })
     .join("\n");
 }
 
-// ── Tool result part (collapsible with auto-collapse after 1.5s) ────────
+// ── Tool result part (collapsible with auto-collapse) ────────────────────
 
 function ToolResultPartRenderer(props: {
   part: ToolResultPart;
   isNew: boolean;
+  nextToolCallTick?: number;
 }) {
-  // Loaded-from-history results start collapsed; fresh results start expanded
   const [expanded, setExpanded] = createSignal(props.isNew);
   let userInteracted = false;
   let timerRef: number | undefined;
@@ -520,8 +595,19 @@ function ToolResultPartRenderer(props: {
     if (timerRef !== undefined) clearTimeout(timerRef);
   });
 
+  // When the next tool call starts, collapse immediately (faster than 1.5s)
+  createEffect(() => {
+    props.nextToolCallTick; // react to tick
+    if (!userInteracted && expanded()) {
+      if (timerRef !== undefined) {
+        clearTimeout(timerRef);
+        timerRef = undefined;
+      }
+      setExpanded(false);
+    }
+  });
+
   const toggle = () => {
-    // First user interaction — disable auto-collapse permanently
     if (!userInteracted) {
       userInteracted = true;
       if (timerRef !== undefined) {
@@ -534,7 +620,6 @@ function ToolResultPartRenderer(props: {
 
   return (
     <div class="mb-2">
-      {/* Header row: checkmark + label + chevron */}
       <button
         onClick={toggle}
         class="flex items-center gap-1.5 text-xs font-medium text-(--text-secondary) hover:text-(--accent) transition-colors cursor-pointer w-full text-left"
@@ -567,7 +652,6 @@ function ToolResultPartRenderer(props: {
           </svg>
         </span>
       </button>
-      {/* Collapsible body */}
       <div
         class="overflow-hidden transition-all duration-300 ease-in-out"
         classList={{
