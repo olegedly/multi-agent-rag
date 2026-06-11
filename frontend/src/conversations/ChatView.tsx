@@ -7,6 +7,7 @@ import {
   onCleanup,
 } from "solid-js";
 import { SolidMarkdown } from "solid-markdown";
+import remarkGfm from "remark-gfm";
 import type {
   UIMessage,
   MessagePart,
@@ -35,7 +36,56 @@ function isDesktop(): boolean {
 export function ChatView(props: ChatViewProps) {
   const [input, setInput] = createSignal("");
   let messagesEndRef: HTMLDivElement | undefined;
+  let scrollContainerRef: HTMLDivElement | undefined;
   let textareaRef: HTMLTextAreaElement | undefined;
+  let isUserAtBottom = true;
+
+  // Track which tool result parts are "new" (appeared during current load)
+  let seenToolPartKeys = new Set<string>();
+  let wasLoadingForKeys = false;
+
+  const isNewToolResult = (msgId: string, toolCallId: string): boolean => {
+    // If loading is active, any result not seen before loading started is new
+    if (props.isLoading) {
+      return !seenToolPartKeys.has(`${msgId}:${toolCallId}`);
+    }
+    return false;
+  };
+
+  // Snapshot current tool-result keys on mount and at each loading→start
+  // transition, so previously-seen results don't get the auto-collapse.
+  // Snapshot current tool-result keys on mount (so saved conversations
+  // don't auto-collapse) and at each loading→start transition.
+  let didInitialSnapshot = false;
+  createEffect(() => {
+    const loading = props.isLoading;
+    if (!didInitialSnapshot) {
+      didInitialSnapshot = true;
+      // Fall through to snapshot on first run regardless of loading state
+    } else if (wasLoadingForKeys === loading) {
+      // No loading-state transition — nothing to snapshot
+      return;
+    }
+    wasLoadingForKeys = loading;
+
+    const keys = new Set<string>();
+    for (const msg of props.messages()) {
+      for (const part of msg.parts) {
+        if (part.type === "tool-result") {
+          keys.add(`${msg.id}:${part.toolCallId}`);
+        }
+      }
+    }
+    seenToolPartKeys = keys;
+  });
+
+  const handleScroll = () => {
+    const el = scrollContainerRef;
+    if (!el) return;
+    const threshold = 100;
+    isUserAtBottom =
+      el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  };
 
   // Autofocus on app load (desktop only)
   onMount(() => {
@@ -47,15 +97,15 @@ export function ChatView(props: ChatViewProps) {
   });
 
   // Autofocus after LLM response finishes streaming (desktop only)
-  let wasLoading = false;
+  let wasLoadingForFocus = false;
   createEffect(() => {
     const loading = props.isLoading;
-    if (wasLoading && !loading && isDesktop()) {
+    if (wasLoadingForFocus && !loading && isDesktop()) {
       queueMicrotask(() => {
         textareaRef?.focus();
       });
     }
-    wasLoading = loading;
+    wasLoadingForFocus = loading;
   });
 
   // Auto-grow textarea height as content grows, capped by max-h with scroll
@@ -68,11 +118,13 @@ export function ChatView(props: ChatViewProps) {
   });
 
   createEffect(() => {
-    // Scroll to bottom whenever messages change
+    // Only auto-scroll if the user hasn't scrolled up
     props.messages();
-    queueMicrotask(() => {
-      messagesEndRef?.scrollIntoView({ behavior: "smooth" });
-    });
+    if (isUserAtBottom) {
+      queueMicrotask(() => {
+        messagesEndRef?.scrollIntoView({ behavior: "smooth" });
+      });
+    }
   });
 
   const handleSubmit = (e: Event) => {
@@ -111,7 +163,11 @@ export function ChatView(props: ChatViewProps) {
       </Show>
 
       {/* Messages area */}
-      <div class="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      <div
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+        class="flex-1 overflow-y-auto px-4 py-4 space-y-4"
+      >
         <For each={props.messages()}>
           {(msg) => (
             <div
@@ -128,7 +184,17 @@ export function ChatView(props: ChatViewProps) {
                   {msg.role}
                 </div>
                 <For each={msg.parts}>
-                  {(part) => <PartRenderer part={part} />}
+                  {(part) => (
+                    <PartRenderer
+                      part={part}
+                      msgId={msg.id}
+                      isNewToolResult={
+                        part.type === "tool-result"
+                          ? isNewToolResult(msg.id, part.toolCallId)
+                          : false
+                      }
+                    />
+                  )}
                 </For>
               </div>
             </div>
@@ -210,7 +276,11 @@ export function ChatView(props: ChatViewProps) {
 
 // ── Part renderer ──────────────────────────────────────────────────────────
 
-function PartRenderer(props: { part: MessagePart }) {
+function PartRenderer(props: {
+  part: MessagePart;
+  msgId: string;
+  isNewToolResult: boolean;
+}) {
   return (
     <>
       {props.part.type === "text" && <TextPartRenderer part={props.part} />}
@@ -221,7 +291,10 @@ function PartRenderer(props: { part: MessagePart }) {
         <ToolCallPartRenderer part={props.part} />
       )}
       {props.part.type === "tool-result" && (
-        <ToolResultPartRenderer part={props.part} />
+        <ToolResultPartRenderer
+          part={props.part}
+          isNew={props.isNewToolResult}
+        />
       )}
     </>
   );
@@ -232,7 +305,10 @@ function PartRenderer(props: { part: MessagePart }) {
 function TextPartRenderer(props: { part: TextPart }) {
   return (
     <div class="prose prose-sm max-w-none">
-      <SolidMarkdown children={props.part.content} />
+      <SolidMarkdown
+        children={props.part.content}
+        remarkPlugins={[remarkGfm]}
+      />
     </div>
   );
 }
@@ -422,12 +498,17 @@ function jsonToYaml(value: unknown, indent: number = 0): string {
 
 // ── Tool result part (collapsible with auto-collapse after 1.5s) ────────
 
-function ToolResultPartRenderer(props: { part: ToolResultPart }) {
-  const [expanded, setExpanded] = createSignal(true);
+function ToolResultPartRenderer(props: {
+  part: ToolResultPart;
+  isNew: boolean;
+}) {
+  // Loaded-from-history results start collapsed; fresh results start expanded
+  const [expanded, setExpanded] = createSignal(props.isNew);
   let userInteracted = false;
   let timerRef: number | undefined;
 
   onMount(() => {
+    if (!props.isNew) return;
     timerRef = window.setTimeout(() => {
       if (!userInteracted) {
         setExpanded(false);
