@@ -300,6 +300,72 @@ class TestReasoning:
         assert isinstance(events[0], ReasoningMessageContentEvent)
         assert events[0].delta == "think"
 
+    def test_accumulated_reasoning_deltas(self, handler):
+        """DeepSeek-style full accumulated reasoning emits only the new portion.
+
+        DeepSeek sends the full accumulated reasoning_content string in every
+        chunk, not just the delta. The handler must diff against the previous
+        text and emit only the new part.
+        """
+        chunk1 = AIMessageChunk(
+            content="",
+            additional_kwargs={"reasoning_content": "Let me search..."},
+        )
+        handler.observe(chunk1, {"langgraph_node": "agent"})
+        events1 = handler.drain()
+        # First chunk: full text is the delta (nothing to diff against yet)
+        content_events1 = [e for e in events1 if isinstance(e, ReasoningMessageContentEvent)]
+        assert len(content_events1) == 1
+        assert content_events1[0].delta == "Let me search..."
+
+        chunk2 = AIMessageChunk(
+            content="",
+            additional_kwargs={"reasoning_content": "Let me search...Let me get more..."},
+        )
+        handler.observe(chunk2, {"langgraph_node": "agent"})
+        events2 = handler.drain()
+        content_events2 = [e for e in events2 if isinstance(e, ReasoningMessageContentEvent)]
+        assert len(content_events2) == 1
+        # Should be only the NEW portion, not the full accumulated text
+        assert content_events2[0].delta == "Let me get more..."
+
+        chunk3 = AIMessageChunk(
+            content="",
+            additional_kwargs={
+                "reasoning_content": "Let me search...Let me get more...Let me read...",
+            },
+        )
+        handler.observe(chunk3, {"langgraph_node": "agent"})
+        events3 = handler.drain()
+        content_events3 = [e for e in events3 if isinstance(e, ReasoningMessageContentEvent)]
+        assert len(content_events3) == 1
+        assert content_events3[0].delta == "Let me read..."
+
+    def test_accumulated_reasoning_resets_on_close(self, handler):
+        """After reasoning closes, the accumulated text resets for the next block."""
+        chunk1 = AIMessageChunk(
+            content="",
+            additional_kwargs={"reasoning_content": "First thought"},
+        )
+        handler.observe(chunk1, {"langgraph_node": "agent"})
+        handler.drain()
+
+        # Close reasoning by sending text
+        chunk2 = AIMessageChunk(content="Answer here")
+        handler.observe(chunk2, {"langgraph_node": "agent"})
+        handler.drain()
+
+        # Start new reasoning block — should reset accumulated text
+        chunk3 = AIMessageChunk(
+            content="",
+            additional_kwargs={"reasoning_content": "Second thought"},
+        )
+        handler.observe(chunk3, {"langgraph_node": "agent"})
+        events3 = handler.drain()
+        content_events3 = [e for e in events3 if isinstance(e, ReasoningMessageContentEvent)]
+        assert len(content_events3) == 1
+        assert content_events3[0].delta == "Second thought"
+
     def test_reasoning_then_text(self, handler):
         """Reasoning block closes when text starts."""
         chunk1 = AIMessageChunk(content="", additional_kwargs={"reasoning_content": "Hmm"})

@@ -66,6 +66,10 @@ class StreamEventHandler:
         # Track the last known id per index to fill in the gap.
         self._last_tool_call_id_by_index: dict[int, str] = {}
 
+        # Accumulated reasoning content for delta computation
+        # (DeepSeek sends full accumulated text in each chunk)
+        self._last_reasoning_content: str = ""
+
         # Draining — run_started is buffered on construction
         self._pending: list[BaseEvent] = [
             RunStartedEvent(
@@ -154,12 +158,20 @@ class StreamEventHandler:
         if raw_reasoning and isinstance(raw_reasoning, str):
             self._close_text()  # can't interleave, but text may be open
             self._ensure_reasoning_open()
-            self._pending.append(
-                ReasoningMessageContentEvent(
-                    message_id=self._message_id,
-                    delta=raw_reasoning,
-                ),
-            )
+            # DeepSeek sends the full accumulated reasoning_content in each
+            # chunk. Diff against the previous text and emit only the new portion.
+            if raw_reasoning.startswith(self._last_reasoning_content):
+                delta = raw_reasoning[len(self._last_reasoning_content):]
+            else:
+                delta = raw_reasoning  # can't diff, emit full text
+            self._last_reasoning_content = raw_reasoning
+            if delta:
+                self._pending.append(
+                    ReasoningMessageContentEvent(
+                        message_id=self._message_id,
+                        delta=delta,
+                    ),
+                )
             return  # reasoning chunks usually carry no content or tool calls
 
         # Tool call chunks
@@ -265,6 +277,7 @@ class StreamEventHandler:
     def _close_reasoning(self) -> None:
         if self._reasoning_open:
             self._reasoning_open = False
+            self._last_reasoning_content = ""
             self._pending.append(
                 ReasoningMessageEndEvent(message_id=self._message_id),
             )
