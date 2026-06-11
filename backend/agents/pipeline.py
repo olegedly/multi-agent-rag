@@ -22,7 +22,37 @@ from backend.corpus_config import CorporaConfig
 
 
 def _convert_dict_messages(messages: list[dict]) -> list[BaseMessage]:
-    """Convert OpenAI chat-format dicts to LangChain BaseMessage objects."""
+    """Convert AG-UI chat-format dicts to LangChain BaseMessage objects.
+
+    The AG-UI wire format (``uiMessagesToWire``) sends assistant tool_calls
+    under the key ``toolCalls`` as::
+
+        toolCalls = [
+            {
+                "id": "call-...",
+                "type": "function",
+                "function": {
+                    "name": "rag_search",
+                    "arguments": '{"query":"..."}',
+                },
+            },
+        ]
+
+    LangChain ``AIMessage`` expects ``tool_calls`` as::
+
+        tool_calls = [
+            {
+                "id": "call-...",
+                "name": "rag_search",
+                "args": {"query": "..."},
+            },
+        ]
+
+    This function converts between the two formats so that follow-up
+    queries preserve the tool-call/result pairings.
+    """
+    import json
+
     lc_messages: list[BaseMessage] = []
     for msg in messages:
         role = msg.get("role", "")
@@ -30,12 +60,33 @@ def _convert_dict_messages(messages: list[dict]) -> list[BaseMessage]:
         if role == "user":
             lc_messages.append(HumanMessage(content=content))
         elif role == "assistant":
-            lc_messages.append(AIMessage(content=content))
+            # Convert AG-UI wire-format toolCalls to LangChain tool_calls
+            tool_calls_data = msg.get("toolCalls", [])
+            lc_tool_calls = []
+            for tc in tool_calls_data:
+                func = tc.get("function", {})
+                raw_args = func.get("arguments", "{}")
+                try:
+                    parsed_args = json.loads(raw_args)
+                except (json.JSONDecodeError, TypeError):
+                    parsed_args = {}
+                lc_tool_calls.append(
+                    {
+                        "id": tc.get("id", ""),
+                        "name": func.get("name", ""),
+                        "args": parsed_args,
+                    }
+                )
+            lc_messages.append(
+                AIMessage(content=content, tool_calls=lc_tool_calls)
+            )
         elif role == "system":
             lc_messages.append(SystemMessage(content=content))
         elif role == "tool":
+            # AG-UI wire format sends `toolCallId` (camelCase), not `tool_call_id`
+            tool_call_id = msg.get("toolCallId") or msg.get("tool_call_id", "")
             lc_messages.append(
-                ToolMessage(content=content, tool_call_id=msg.get("tool_call_id", ""))
+                ToolMessage(content=content, tool_call_id=tool_call_id)
             )
         else:
             lc_messages.append(HumanMessage(content=content))
