@@ -14,7 +14,15 @@
     "solidjs": {
       "command": "bun",
       "args": [
-        "/home/morket/2. Tech & Software/24. AI/16. Skills/solidJSkills/mcp-server/src/index.js"
+        "/home/morket/ops/skills/solidJSkills/mcp-server/src/index.js"
+      ],
+      "lifecycle": "lazy",
+      "directTools": true
+    },
+    "tailwind": {
+      "command": "bun",
+      "args": [
+        "/home/morket/ops/tools/repos/tailwindcss-mcp-server/build/index.js"
       ],
       "lifecycle": "lazy",
       "directTools": true

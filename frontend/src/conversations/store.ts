@@ -151,6 +151,12 @@ export function createConversationStore(): ConversationStore {
     saveCurrentMessages(messages: UIMessage[]) {
       const cur = currentConversation();
       if (!cur) return;
+
+      // Defense in depth: never overwrite non-empty localStorage data
+      // with an empty message array. This prevents any caller error
+      // (e.g., a stale beforeunload handler or HMR teardown race)
+      // from silently wiping a conversation's history.
+      if (messages.length === 0 && cur.messages.length > 0) return;
       const updated: Conversation = { ...cur, messages };
       // Mutate the conversations array
       const convs = conversations().map((c) =>

@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@plugin "@tailwindcss/typography";
 
 /* ── Global scrollbar styling ──────────────────────────────────────────────
    Firefox
@@ -52,4 +53,35 @@
 
 .ellipsis-indicator .dot:nth-child(3) {
   animation-delay: 0.4s;
+}
+
+/* ── Prose dark-theme refinements inside bubbles ───────────────────────── */
+.prose :where(code):not(:where([class~="not-prose"] *)) {
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+  background: color-mix(in srgb, var(--tw-prose-code) 15%, transparent);
+  font-size: 0.8125rem;
+}
+
+.prose :where(pre):not(:where([class~="not-prose"] *)) {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+}
+
+.prose :where(pre code):not(:where([class~="not-prose"] *)) {
+  background: transparent;
+  padding: 0;
+}
+
+.prose :where(a):not(:where([class~="not-prose"] *)) {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.prose :where(img):not(:where([class~="not-prose"] *)) {
+  border-radius: 0.5rem;
+}
+
+.prose :where(blockquote):not(:where([class~="not-prose"] *)) {
+  font-style: italic;
 }

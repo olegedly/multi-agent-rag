@@ -16,6 +16,34 @@
   --text-assistant-bubble: #1e293b;
   --sidebar-bg: #ffffff;
   --header-bg: #ffffff;
+
+  /* Tool call state badges */
+  --badge-done-bg: #dcfce7;
+  --badge-done-text: #166534;
+  --badge-streaming-bg: #dbeafe;
+  --badge-streaming-text: #1e40af;
+  --badge-waiting-bg: #fef9c3;
+  --badge-waiting-text: #854d0e;
+  --badge-other-bg: #f1f5f9;
+  --badge-other-text: #475569;
+
+  /* Typography (prose) light overrides */
+  --tw-prose-body: var(--text-primary);
+  --tw-prose-headings: var(--text-primary);
+  --tw-prose-lead: var(--text-secondary);
+  --tw-prose-links: var(--accent);
+  --tw-prose-bold: var(--text-primary);
+  --tw-prose-counters: var(--text-secondary);
+  --tw-prose-bullets: var(--text-secondary);
+  --tw-prose-hr: var(--border);
+  --tw-prose-quotes: var(--text-primary);
+  --tw-prose-quote-borders: var(--border);
+  --tw-prose-captions: var(--text-secondary);
+  --tw-prose-code: #e11d48;
+  --tw-prose-pre-code: #1e293b;
+  --tw-prose-pre-bg: #f1f5f9;
+  --tw-prose-th-borders: var(--border);
+  --tw-prose-td-borders: var(--border);
 }
 
 [data-theme="dark"] {
@@ -36,4 +64,56 @@
   --text-assistant-bubble: #f1f5f9;
   --sidebar-bg: #1e293b;
   --header-bg: #1e293b;
+
+  /* Tool call state badges */
+  --badge-done-bg: #052e16;
+  --badge-done-text: #4ade80;
+  --badge-streaming-bg: #1e3a5f;
+  --badge-streaming-text: #60a5fa;
+  --badge-waiting-bg: #422006;
+  --badge-waiting-text: #facc15;
+  --badge-other-bg: #1e293b;
+  --badge-other-text: #94a3b8;
+}
+
+/* User bubble — all prose text should be white (#ffffff) so it
+   contrasts with the blue bubble in both themes */
+.justify-end .prose {
+  --tw-prose-body: #ffffff;
+  --tw-prose-headings: #ffffff;
+  --tw-prose-lead: rgba(255, 255, 255, 0.85);
+  --tw-prose-links: #93c5fd;
+  --tw-prose-bold: #ffffff;
+  --tw-prose-counters: rgba(255, 255, 255, 0.7);
+  --tw-prose-bullets: rgba(255, 255, 255, 0.7);
+  --tw-prose-hr: rgba(255, 255, 255, 0.25);
+  --tw-prose-quotes: #ffffff;
+  --tw-prose-quote-borders: rgba(255, 255, 255, 0.25);
+  --tw-prose-captions: rgba(255, 255, 255, 0.7);
+  --tw-prose-code: #f9a8d4;
+  --tw-prose-pre-code: #ffffff;
+  --tw-prose-pre-bg: rgba(0, 0, 0, 0.25);
+  --tw-prose-th-borders: rgba(255, 255, 255, 0.2);
+  --tw-prose-td-borders: rgba(255, 255, 255, 0.2);
+}
+
+/* Typography (prose) dark overrides — higher specificity to beat the
+   plugin's own .prose selector in the cascade order */
+[data-theme="dark"] .prose {
+  --tw-prose-body: #f1f5f9;
+  --tw-prose-headings: #f1f5f9;
+  --tw-prose-lead: #94a3b8;
+  --tw-prose-links: #60a5fa;
+  --tw-prose-bold: #f1f5f9;
+  --tw-prose-counters: #94a3b8;
+  --tw-prose-bullets: #94a3b8;
+  --tw-prose-hr: #334155;
+  --tw-prose-quotes: #f1f5f9;
+  --tw-prose-quote-borders: #334155;
+  --tw-prose-captions: #94a3b8;
+  --tw-prose-code: #f472b6;
+  --tw-prose-pre-code: #e2e8f0;
+  --tw-prose-pre-bg: #0f172a;
+  --tw-prose-th-borders: #334155;
+  --tw-prose-td-borders: #334155;
 }

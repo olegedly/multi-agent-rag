@@ -36,6 +36,11 @@ export function useChatStore() {
       chat.stop();
     }
     saveCurrent();
+    // Clear messages and error state before loading saved messages.
+    // We use chat.clear() (not chat.setMessages([])) because clear()
+    // also calls setError(undefined), clearing any stale error from
+    // the previous conversation.
+    chat.clear();
     store.switchTo(id);
     const msgs = store.getCurrentMessages();
     chat.setMessages(msgs);
@@ -48,8 +53,8 @@ export function useChatStore() {
     if (wasLoading) {
       chat.stop();
     }
-    // Clear current chat
-    chat.setMessages([]);
+    // Clear current chat (messages + error state)
+    chat.clear();
     store.createNew();
     localStorage.removeItem(SAVE_KEY);
   };
@@ -62,8 +67,8 @@ export function useChatStore() {
       chat.stop();
     }
     // Don't save — user explicitly deleted
-    // Clear messages first so we don't save stale refs
-    chat.setMessages([]);
+    // Clear messages and error state first
+    chat.clear();
     store.removeCurrent();
     const msgs = store.getCurrentMessages();
     chat.setMessages(msgs);
