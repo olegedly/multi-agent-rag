@@ -10,6 +10,12 @@ Whenever a path needs to be provided to a tool as an argument (e.g. to navigate 
 
 Do not manage processes related to starting or killing development servers or anything of that sort. Assume all the right services are running. If you find that they don't, stop and ask the user to start them. Both the backend and the frontend have hot module reloading, so just editing files is sufficient. Your changes propagate immediately. If doing browser control via CDP, assume the right tab is already open. Work with it via UI interaction.
 
+## Streaming Debugging
+
+When reasoning/thinking tokens appear as regular text, or SSE events seem
+wrong, read [docs/streaming-debug.md](docs/streaming-debug.md) for the
+diagnosis procedure (feedback loop → chunk inspection → patch verification).
+
 ## Testing — This Is the Only Way
 
 Use `make test`, `make test_backend`, or `make test_frontend`. Never invoke
