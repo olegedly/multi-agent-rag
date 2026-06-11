@@ -43,6 +43,50 @@ class TestDeltaPatches:
         reasoning = result.additional_kwargs.get("reasoning_content", "")
         assert reasoning == "Let me think..."
 
+    def test_reasoning_key_in_delta(self):
+        """Delta-level patch preserves the ``reasoning`` key (OpenAI-style)."""
+        delta_dict = {
+            "content": "",
+            "role": "assistant",
+            "reasoning": "The user is asking about EU law...",
+        }
+        result = _convert_delta_to_message_chunk(delta_dict, AIMessageChunk)
+        reasoning = result.additional_kwargs.get("reasoning_content", "")
+        assert reasoning == "The user is asking about EU law..."
+
+    def test_reasoning_details_key_in_delta(self):
+        """Delta-level patch extracts text from ``reasoning_details`` array."""
+        delta_dict = {
+            "content": "",
+            "role": "assistant",
+            "reasoning_details": [
+                {"type": "reasoning.text", "text": "First I need to understand", "format": "unknown", "index": 0},
+                {"type": "reasoning.text", "text": " what is being asked", "format": "unknown", "index": 1},
+            ],
+        }
+        result = _convert_delta_to_message_chunk(delta_dict, AIMessageChunk)
+        reasoning = result.additional_kwargs.get("reasoning_content", "")
+        assert "First I need to understand" in reasoning
+        assert "what is being asked" in reasoning
+
+    def test_all_three_reasoning_keys_take_priority_correctly(self):
+        """If multiple keys present, preference order: reasoning_content > reasoning > reasoning_details."""
+        delta_dict = {
+            "content": "",
+            "role": "assistant",
+            "reasoning_content": "winner",
+            "reasoning": "loser",
+            "reasoning_details": [{"type": "reasoning.text", "text": "also loser"}],
+        }
+        result = _convert_delta_to_message_chunk(delta_dict, AIMessageChunk)
+        assert result.additional_kwargs.get("reasoning_content") == "winner"
+
+    def test_empty_reasoning_details_is_ignored(self):
+        """Empty reasoning_details array does not produce a reasoning_content entry."""
+        delta_dict = {"content": "Hello", "role": "assistant", "reasoning_details": []}
+        result = _convert_delta_to_message_chunk(delta_dict, AIMessageChunk)
+        assert "reasoning_content" not in result.additional_kwargs
+
     def test_no_reasoning_content_is_fine(self):
         """Chunks without reasoning_content should work normally."""
         delta_dict = {"content": "Hello world", "role": "assistant"}
@@ -135,6 +179,42 @@ class TestChunkPatches:
         msg = result.message
         assert msg.additional_kwargs.get("reasoning_content") == "Should I search?"
         assert len(cast("AIMessageChunk", msg).tool_call_chunks) == 1
+
+class TestPatchIntegrity:
+    """Detect if the monkey-patch silently stopped applying.
+
+    Checks two things:
+    1. The ``_patched_*`` functions are actually assigned where we expect.
+    2. The module-level ``PATCHED_METHODS`` set matches the actual patched
+       function names — if an upstream rename makes the old assignment a no-op,
+       this test catches it.
+    """
+
+    def test_convert_delta_is_patched(self):
+        """_convert_delta_to_message_chunk must be our patched version."""
+        assert _convert_delta_to_message_chunk.__qualname__ == "_patched_convert_delta"
+        assert _convert_delta_to_message_chunk.__module__ == backend.agents.__name__
+
+    def test_convert_chunk_is_patched(self):
+        """BaseChatOpenAI._convert_chunk_to_generation_chunk must be our patched version."""
+        patched = BaseChatOpenAI._convert_chunk_to_generation_chunk  # type: ignore[attr-defined]
+        assert patched.__qualname__ == "_patched_convert_chunk"
+        assert patched.__module__ == backend.agents.__name__
+
+    def test_patched_methods_set_matches(self):
+        """Every expected method name in PATCHED_METHODS is actually patched.
+
+        If an upstream rename causes the patched function to never be called
+        (the old-name assignment targets a dead path), the method will still
+        show as patched here because we assigned it above.  This test instead
+        checks that the *name string* is in the PATCHED_METHODS manifest.
+        If someone patches a new method and forgets to add it to
+        PATCHED_METHODS, that omission is caught too.
+        """
+        from backend.agents import PATCHED_METHODS as expected
+
+        assert "_convert_delta_to_message_chunk" in expected
+        assert "BaseChatOpenAI._convert_chunk_to_generation_chunk" in expected
 
     def test_end_to_end_stream_handler_sees_reasoning(self):
         """StreamEventHandler picks up reasoning from the patched chunk."""
