@@ -17,6 +17,16 @@
   --sidebar-bg: #ffffff;
   --header-bg: #ffffff;
 
+  /* Tool call state badges */
+  --badge-done-bg: #dcfce7;
+  --badge-done-text: #166534;
+  --badge-streaming-bg: #dbeafe;
+  --badge-streaming-text: #1e40af;
+  --badge-waiting-bg: #fef9c3;
+  --badge-waiting-text: #854d0e;
+  --badge-other-bg: #f1f5f9;
+  --badge-other-text: #475569;
+
   /* Typography (prose) light overrides */
   --tw-prose-body: var(--text-primary);
   --tw-prose-headings: var(--text-primary);
@@ -54,6 +64,16 @@
   --text-assistant-bubble: #f1f5f9;
   --sidebar-bg: #1e293b;
   --header-bg: #1e293b;
+
+  /* Tool call state badges */
+  --badge-done-bg: #052e16;
+  --badge-done-text: #4ade80;
+  --badge-streaming-bg: #1e3a5f;
+  --badge-streaming-text: #60a5fa;
+  --badge-waiting-bg: #422006;
+  --badge-waiting-text: #facc15;
+  --badge-other-bg: #1e293b;
+  --badge-other-text: #94a3b8;
 }
 
 /* User bubble — all prose text should be white (#ffffff) so it

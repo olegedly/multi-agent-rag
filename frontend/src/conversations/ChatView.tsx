@@ -298,15 +298,25 @@ function ToolCallPartRenderer(props: { part: ToolCallPart }) {
             {props.part.name}
           </code>
           <span
-            class={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-              props.part.state === "complete"
-                ? "bg-green-900/30 text-green-400"
-                : props.part.state === "input-streaming"
-                  ? "bg-blue-900/30 text-blue-400"
-                  : props.part.state === "awaiting-input"
-                    ? "bg-yellow-900/30 text-yellow-400"
-                    : "bg-gray-700/30 text-gray-400"
-            }`}
+            class="px-1.5 py-0.5 rounded text-[10px] font-medium"
+            style={{
+              "background-color":
+                props.part.state === "complete"
+                  ? "var(--badge-done-bg)"
+                  : props.part.state === "input-streaming"
+                    ? "var(--badge-streaming-bg)"
+                    : props.part.state === "awaiting-input"
+                      ? "var(--badge-waiting-bg)"
+                      : "var(--badge-other-bg)",
+              color:
+                props.part.state === "complete"
+                  ? "var(--badge-done-text)"
+                  : props.part.state === "input-streaming"
+                    ? "var(--badge-streaming-text)"
+                    : props.part.state === "awaiting-input"
+                      ? "var(--badge-waiting-text)"
+                      : "var(--badge-other-text)",
+            }}
           >
             {TOOL_CALL_LABELS[props.part.state] ?? props.part.state}
           </span>
