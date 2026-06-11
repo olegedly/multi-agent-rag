@@ -1,22 +1,29 @@
-"""Monkey-patch LangChain to preserve reasoning_content from the API response.
+"""Monkey-patch LangChain to preserve reasoning content from any API format.
 
 ``_convert_delta_to_message_chunk`` in langchain-openai only copies
 ``function_call`` into ``additional_kwargs`` from the delta dict. However,
-OpenAI-compatible reasoning APIs (DeepSeek, etc.) send ``reasoning_content``
-at the **choice** level, not inside delta::
+OpenAI-compatible reasoning APIs (DeepSeek, newer OpenAI models, etc.) send
+reasoning content in proprietary fields that are silently dropped.
 
-    {"choices": [{"delta": {"content": ""}, "reasoning_content": "..."}], ...}
+Known field names (all normalized to ``additional_kwargs["reasoning_content"]``):
 
-LangChain's ``_convert_chunk_to_generation_chunk`` only passes
-``choice["delta"]`` to ``_convert_delta_to_message_chunk``, so
-reasoning_content is silently dropped before our patch ever sees it.
+  ====================  ======  ===========================================
+  Field                 Level   Providers
+  ====================  ======  ===========================================
+  ``reasoning_content`` choice  DeepSeek (full accumulated text per chunk)
+  ``reasoning``         delta   OpenAI o-series, Gemini compat (delta text)
+  ``reasoning_details`` delta   Same providers, structured array per delta
+  ====================  ======  ===========================================
 
-This module patches both:
-1. ``BaseChatOpenAI._convert_chunk_to_generation_chunk`` — extracts
-   ``reasoning_content`` from the choice dict and puts it into
-   ``additional_kwargs`` on the ``AIMessageChunk``.
-2. ``_convert_delta_to_message_chunk`` — defense in depth for providers
-   that do put it in the delta.
+This module patches two private functions on ``BaseChatOpenAI``:
+1. ``_convert_chunk_to_generation_chunk`` — extracts ``reasoning_content``
+   from the choice dict (choice-level fields).
+2. ``_convert_delta_to_message_chunk`` — extracts ``reasoning`` and
+   ``reasoning_details`` from the delta dict (delta-level fields).
+
+**Version drift risk.** Both are private implementation details. Bumping
+``langchain-openai`` may silently break the patch. Pin ``langchain-openai``
+in ``pyproject.toml`` and update the ``PATCHED_METHODS`` set when upgrading.
 """
 
 from __future__ import annotations
@@ -26,7 +33,53 @@ from typing import Any as _Any
 
 import langchain_openai.chat_models.base as _lc_openai_base
 
-# ── Patch 1: _convert_delta_to_message_chunk (defense in depth) ──────
+# Used by the version-drift safety check on first import.
+PATCHED_METHODS = {
+    "BaseChatOpenAI._convert_chunk_to_generation_chunk",
+    "_convert_delta_to_message_chunk",
+}
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _extract_reasoning_details(
+    raw: _Any,
+) -> str | None:
+    """Extract delta text from a ``reasoning_details`` array.
+
+    The array format is::
+
+        [{"type": "reasoning.text", "text": " delta text here "}, ...]
+
+    Returns the concatenation of all ``text`` fields, or ``None`` if the
+    input isn't a list with at least one valid entry.
+    """
+    if not isinstance(raw, list) or not raw:
+        return None
+    parts: list[str] = []
+    for entry in raw:
+        if isinstance(entry, dict):
+            text = entry.get("text")
+            if isinstance(text, str) and text.strip():
+                parts.append(text)
+    return "".join(parts) if parts else None
+
+
+def _gather_reasoning_delta(_dict: _Mapping[str, _Any]) -> str | None:
+    """Try every known delta-level reasoning field, returning the first hit."""
+    for key in ("reasoning_content", "reasoning"):
+        val = _dict.get(key)
+        if val is not None and isinstance(val, str) and val:
+            return val
+    # Fall through to the structured array format
+    return _extract_reasoning_details(_dict.get("reasoning_details"))
+
+
+# ---------------------------------------------------------------------------
+# Patch 1: _convert_delta_to_message_chunk (delta-level defense in depth)
+# ---------------------------------------------------------------------------
 
 _orig_convert_delta = _lc_openai_base._convert_delta_to_message_chunk
 
@@ -35,17 +88,23 @@ def _patched_convert_delta(
     _dict: _Mapping[str, _Any],
     default_class: type,
 ) -> _Any:
+    reasoning = _gather_reasoning_delta(_dict)
     result = _orig_convert_delta(_dict, default_class)
-    reasoning = _dict.get("reasoning_content")
     if reasoning is not None and hasattr(result, "additional_kwargs"):
-        result.additional_kwargs["reasoning_content"] = str(reasoning)
+        # Normalize to reasoning_content so StreamEventHandler can find it
+        result.additional_kwargs["reasoning_content"] = reasoning
     return result
 
 
 _lc_openai_base._convert_delta_to_message_chunk = _patched_convert_delta
 
-# ── Patch 2: BaseChatOpenAI._convert_chunk_to_generation_chunk ───────
-# This is the real fix — reasoning_content lives at the choice level.
+# ---------------------------------------------------------------------------
+# Patch 2: BaseChatOpenAI._convert_chunk_to_generation_chunk (choice-level)
+# ---------------------------------------------------------------------------
+# This is the primary fix for DeepSeek-style APIs where reasoning_content
+# lives at the choice level, not inside delta::
+#
+#     {"choices": [{"delta": {"content": ""}, "reasoning_content": "..."}], ...}
 
 _orig_convert_chunk = _lc_openai_base.BaseChatOpenAI._convert_chunk_to_generation_chunk  # type: ignore[attr-defined]
 
@@ -57,17 +116,17 @@ def _patched_convert_chunk(
     base_generation_info: dict | None,
 ) -> _Any:
     # Grab reasoning_content from the choice before calling the original
-    reasoning_content: str | None = None
+    reasoning: str | None = None
     choices = chunk.get("choices", [])
     if choices:
-        reasoning_content = choices[0].get("reasoning_content")
+        reasoning = choices[0].get("reasoning_content")
 
     result = _orig_convert_chunk(self, chunk, default_chunk_class, base_generation_info)
 
-    if reasoning_content is not None and result is not None:
+    if reasoning is not None and result is not None:
         msg = result.message
         if hasattr(msg, "additional_kwargs"):
-            msg.additional_kwargs["reasoning_content"] = str(reasoning_content)
+            msg.additional_kwargs["reasoning_content"] = reasoning
 
     return result
 
