@@ -4,6 +4,9 @@ import solidPlugin from "vite-plugin-solid";
 
 export default defineConfig({
   plugins: [solidPlugin(), tailwindcss()],
+  optimizeDeps: {
+    include: ["debug", "extend", "inline-style-parser", "style-to-object"],
+  },
   server: {
     port: 3000,
     proxy: {
