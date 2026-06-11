@@ -1,4 +1,11 @@
-import { For, Show, createSignal, createEffect, onMount, onCleanup } from "solid-js";
+import {
+  For,
+  Show,
+  createSignal,
+  createEffect,
+  onMount,
+  onCleanup,
+} from "solid-js";
 import { SolidMarkdown } from "solid-markdown";
 import type {
   UIMessage,
@@ -463,30 +470,32 @@ function ToolResultPartRenderer(props: { part: ToolResultPart }) {
             clip-rule="evenodd"
           />
         </svg>
-        <span>Result</span>
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          class={`h-3 w-3 ml-auto transition-transform duration-200 ${expanded() ? "rotate-90" : ""}`}
-          viewBox="0 0 20 20"
-          fill="currentColor"
-        >
-          <path
-            fill-rule="evenodd"
-            d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
-            clip-rule="evenodd"
-          />
-        </svg>
+        <span class="flex items-center gap-1">
+          Result
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class={`h-3 w-3 mt-[2.6px] transition-transform duration-200 ${expanded() ? "rotate-90" : ""}`}
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path
+              fill-rule="evenodd"
+              d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
+              clip-rule="evenodd"
+            />
+          </svg>
+        </span>
       </button>
       {/* Collapsible body */}
       <div
         class="overflow-hidden transition-all duration-300 ease-in-out"
-        style={{
-          "max-height": expanded() ? "250px" : "0px",
-          opacity: expanded() ? 1 : 0,
+        classList={{
+          "max-h-0 opacity-0": !expanded(),
+          "max-h-80 opacity-100": expanded(),
         }}
       >
         <div class="mt-1 pl-5">
-          <div class="text-xs text-(--text-secondary) font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
+          <div class="text-xs text-(--text-secondary) font-mono whitespace-pre-wrap leading-relaxed max-h-75 overflow-y-auto">
             {formatToolResult(props.part.content)}
           </div>
         </div>
