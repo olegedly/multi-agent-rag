@@ -1,6 +1,7 @@
 import {
   For,
   Show,
+  on,
   createSignal,
   createEffect,
   onMount,
@@ -170,11 +171,13 @@ export function ChatView(props: ChatViewProps) {
   });
 
   createEffect(() => {
-    // Only auto-scroll if the user hasn't scrolled up
+    // Only auto-scroll if the user hasn't scrolled up.
+    // Uses instant scroll (not smooth) to avoid intermediate scroll
+    // events that can conflict with the user's scroll position.
     props.messages();
     if (isUserAtBottom) {
       queueMicrotask(() => {
-        messagesEndRef?.scrollIntoView({ behavior: "smooth" });
+        messagesEndRef?.scrollIntoView();
       });
     }
   });
@@ -595,17 +598,23 @@ function ToolResultPartRenderer(props: {
     if (timerRef !== undefined) clearTimeout(timerRef);
   });
 
-  // When the next tool call starts, collapse immediately (faster than 1.5s)
-  createEffect(() => {
-    props.nextToolCallTick; // react to tick
-    if (!userInteracted && expanded()) {
-      if (timerRef !== undefined) {
-        clearTimeout(timerRef);
-        timerRef = undefined;
-      }
-      setExpanded(false);
-    }
-  });
+  // When the next tool call starts, collapse immediately (faster than 1.5s).
+  // Deferred so it doesn't fire on mount — only when the tick actually changes.
+  createEffect(
+    on(
+      () => props.nextToolCallTick,
+      () => {
+        if (!userInteracted && expanded()) {
+          if (timerRef !== undefined) {
+            clearTimeout(timerRef);
+            timerRef = undefined;
+          }
+          setExpanded(false);
+        }
+      },
+      { defer: true },
+    ),
+  );
 
   const toggle = () => {
     if (!userInteracted) {

@@ -607,4 +607,173 @@ describe("ChatView", () => {
     // Should not crash — role badge should show
     expect(screen.getByText("assistant")).toBeTruthy();
   });
+
+  // ── Bug 1: tool result auto-expand during loading ────────────────────
+
+  /** Check if a tool result content's wrapper has the expanded CSS class. */
+  function expectToolResultState(resultText: string, expanded: boolean) {
+    const el = screen.getByText(resultText);
+    const wrapper = el.closest('[class*="overflow-hidden"]') as HTMLElement | null;
+    expect(wrapper).toBeTruthy();
+    const cls = wrapper!.className;
+    const hasCollapsed = cls.includes("max-h-0") && cls.includes("opacity-0");
+    if (expanded) {
+      expect(hasCollapsed).toBe(false);
+    } else {
+      expect(hasCollapsed).toBe(true);
+    }
+  }
+
+  it("starts tool result expanded when it appears during loading (no prior messages)", () => {
+    const [msgs, setMsgs] = createSignal<UIMessage[]>([]);
+
+    render(() => (
+      <ChatView
+        messages={msgs}
+        isLoading={true}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Simulate tool result streaming in while loading
+    const msg: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "test_tool",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: "Hello from tool!",
+          state: "complete" as const,
+        },
+      ],
+    };
+    setMsgs([msg]);
+
+    // The tool result should be expanded (it's new, arrived during loading)
+    expectToolResultState("Hello from tool!", true);
+  });
+
+  it("starts tool result collapsed when loaded from storage (no loading)", () => {
+    const msg: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "existing-call",
+          name: "previous_tool",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "existing-call",
+          content: "Old result from storage",
+          state: "complete" as const,
+        },
+        { type: "text" as const, content: "Finished" },
+      ],
+    };
+
+    render(() => (
+      <ChatView
+        messages={() => [msg]}
+        isLoading={false}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Should start collapsed (not new — loaded from storage)
+    expectToolResultState("Old result from storage", false);
+  });
+
+  it("starts new tool result expanded when arriving after loading starts", () => {
+    const existingMsg: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "existing-call",
+          name: "previous_tool",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "existing-call",
+          content: "Old result",
+          state: "complete" as const,
+        },
+        { type: "text" as const, content: "Finished" },
+      ],
+    };
+
+    const newMsg: UIMessage = {
+      id: crypto.randomUUID(),
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-call" as const,
+          id: "new-call",
+          name: "new_tool",
+          arguments: "{}",
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "new-call",
+          content: "Brand new result",
+          state: "complete" as const,
+        },
+      ],
+    };
+
+    const [msgs, setMsgs] = createSignal<UIMessage[]>([existingMsg]);
+    const [loading, setLoading] = createSignal(false);
+
+    render(() => (
+      <ChatView
+        messages={msgs}
+        isLoading={loading()}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Old result should start collapsed
+    expectToolResultState("Old result", false);
+
+    // Now: loading transitions to true, then messages arrive
+    setLoading(true);
+
+    return new Promise<void>((resolve) => {
+      queueMicrotask(() => {
+        setMsgs([existingMsg, newMsg]);
+
+        // The new result should be expanded
+        expectToolResultState("Brand new result", true);
+        resolve();
+      });
+    });
+  });
 });
