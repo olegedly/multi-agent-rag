@@ -74,6 +74,52 @@ export function useChatStore() {
     chat.setMessages(msgs);
   };
 
+  /**
+   * Optimistically stop the stream AND finalize any in-flight message
+   * parts so the UI doesn't show stale "streaming" states.
+   *
+   * ChatClient.stop() aborts the HTTP request and sets isLoading=false,
+   * but the processor's assistant message may still have tool-call parts
+   * stuck in "input-streaming" / "streaming" state because finalizeStream()
+   * runs asynchronously after the UI has already re-rendered. We fix this
+   * by cloning the messages and marking incomplete parts as complete.
+   */
+  const stop = () => {
+    chat.stop();
+    // After stop(), finalize any in-progress parts in the current
+    // assistant message. This is an optimistic UI update — it runs
+    // synchronously after the abort, before the library's internal
+    // finalizeStream() catches up.
+    const msgs = chat.messages();
+    const updated = msgs.map((msg) => {
+      if (msg.role !== "assistant") return msg;
+      let changed = false;
+      const newParts = msg.parts.map((part) => {
+        if (part.type === "tool-call") {
+          if (part.state !== "complete") {
+            changed = true;
+            return { ...part, state: "complete" as const };
+          }
+        }
+        if (part.type === "tool-result") {
+          if (part.state !== "complete") {
+            changed = true;
+            return { ...part, state: "complete" as const };
+          }
+        }
+        return part;
+      });
+      if (!changed) return msg;
+      return { ...msg, parts: newParts };
+    });
+    if (updated !== msgs) {
+      // Use setTimeout to avoid mutating state during the current
+      // reactive tick — the library may still be propagating its
+      // own state changes.
+      setTimeout(() => chat.setMessages(updated), 0);
+    }
+  };
+
   // Send message with auto-title
   const sendMessage = (text: string) => {
     // Derive title from the message being sent
@@ -122,7 +168,7 @@ export function useChatStore() {
 
     // Actions
     sendMessage,
-    stop: chat.stop,
+    stop,
     clear: chat.clear,
     switchTo,
     createNew,

@@ -71,10 +71,20 @@ export function createToolResultTracker(
     prevUnpairedCount = unpairedCount;
   });
 
-  // When loading transitions to false, reset the prev count so next load
-  // doesn't incorrectly skip a tick
+  // When loading transitions to false (stream ended — either by normal
+  // completion or by the Stop button), increment the tick to collapse
+  // all expanded result blocks. This ensures that when the user clicks
+  // Stop, any tool result that was expanded during streaming gets
+  // collapsed immediately.
+  let prevLoading = true;
   createEffect(() => {
-    if (!loading()) {
+    const nowLoading = loading();
+    if (prevLoading && !nowLoading) {
+      // Loading just ended — tick once to collapse
+      setNextToolCallTick((t) => t + 1);
+    }
+    prevLoading = nowLoading;
+    if (!nowLoading) {
       prevUnpairedCount = 0;
     }
   });
