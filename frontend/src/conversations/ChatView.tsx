@@ -21,6 +21,8 @@ interface ChatViewProps {
   onSend: (text: string) => void;
   onStop: () => void;
   onDismissStorageError: () => void;
+  /** Incrementing value that causes ChatInput to re-focus */
+  focusTick?: number;
 }
 
 export function ChatView(props: ChatViewProps) {
@@ -66,6 +68,7 @@ export function ChatView(props: ChatViewProps) {
           isLoading={props.isLoading}
           onSend={props.onSend}
           onStop={props.onStop}
+          focusTick={props.focusTick}
         />
       </div>
     </StopCollapseContext.Provider>

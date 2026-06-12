@@ -329,12 +329,13 @@ describe("ChatView", () => {
   });
 
   it("hides thinking content when reasoning panel is collapsed", async () => {
+    const [loading] = createSignal(true);
     const messages = createSignal<UIMessage[]>([thinkingMsg("Hidden thought")]);
 
     render(() => (
       <ChatView
         messages={messages[0]}
-        isLoading={false}
+        isLoading={loading()}
         error={null}
         storageError={null}
         onSend={() => {}}
@@ -343,7 +344,7 @@ describe("ChatView", () => {
       />
     ));
 
-    // Content should be visible initially
+    // Content should be visible initially (while streaming)
     expect(screen.getByText("Hidden thought")).toBeTruthy();
 
     // Click the toggle to collapse
@@ -384,6 +385,27 @@ describe("ChatView", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     // After reactive update, thinking block should collapse
+    expect(wrapper.className).toContain("opacity-0");
+  });
+
+  it("collapses thinking block when loaded from storage (not loading)", () => {
+    const [loading] = createSignal(false);
+    const msg = thinkingMsg("Stored thought");
+
+    render(() => (
+      <ChatView
+        messages={() => [msg]}
+        isLoading={loading()}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Content should be collapsed — loaded from storage, not streaming
+    const wrapper = screen.getByText("Stored thought").closest('[class*="overflow-hidden"]')!;
     expect(wrapper.className).toContain("opacity-0");
   });
 

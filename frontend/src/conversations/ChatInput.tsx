@@ -11,6 +11,8 @@ export interface ChatInputProps {
   isLoading: boolean;
   onSend: (text: string) => void;
   onStop: () => void;
+  /** Incrementing value that triggers autofocus (e.g. after '+ New') */
+  focusTick?: number;
 }
 
 function isDesktop(): boolean {
@@ -26,6 +28,17 @@ export function ChatInput(props: ChatInputProps) {
   // Autofocus on mount (desktop only)
   onMount(() => {
     if (isDesktop()) {
+      queueMicrotask(() => {
+        textareaRef?.focus();
+      });
+    }
+  });
+
+  // Re-focus when focusTick changes (e.g. '+ New' button clicked)
+  createEffect(() => {
+    // Access focusTick to create reactive dependency
+    const tick = props.focusTick;
+    if (tick !== undefined && tick > 0 && isDesktop()) {
       queueMicrotask(() => {
         textareaRef?.focus();
       });

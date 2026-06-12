@@ -88,6 +88,7 @@ function PartRenderer(props: {
       {props.part.type === "thinking" && (
         <ThinkingPartRenderer
           part={props.part}
+          isLoading={props.isLoading}
           nextToolCallTick={props.nextToolCallTick}
         />
       )}
@@ -145,10 +146,17 @@ function TextPartRenderer(props: { part: TextPart }) {
   );
 }
 
-function ThinkingPartRenderer(props: { part: ThinkingPart; nextToolCallTick: number }) {
+function ThinkingPartRenderer(props: {
+  part: ThinkingPart;
+  isLoading: boolean;
+  nextToolCallTick: number;
+}) {
+  // Start expanded only when created during active streaming.
+  // When loaded from storage (isLoading=false), start collapsed.
   return (
     <CollapsibleSection
       label="Reasoned"
+      expanded={props.isLoading}
       collapseOnTick={props.nextToolCallTick}
       leadingIcon={
         <svg

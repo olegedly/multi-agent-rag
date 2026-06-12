@@ -82,12 +82,12 @@ describe("MessagePartRenderer", () => {
     expect(screen.getByText("world")).toBeTruthy();
   });
 
-  it("renders thinking parts in a collapsible reasoning panel", () => {
+  it("renders thinking parts expanded during streaming (isLoading=true)", () => {
     const msg = thinkingMsg("m1", "Thought process", "Final answer");
     render(() => (
       <MessagePartRenderer
         msg={msg}
-        isLoading={false}
+        isLoading={true}
         nextToolCallTick={0}
       />
     ));
@@ -97,12 +97,27 @@ describe("MessagePartRenderer", () => {
     expect(screen.getByText("Final answer")).toBeTruthy();
   });
 
+  it("collapses thinking content when loaded from storage (isLoading=false)", () => {
+    const msg = thinkingMsg("m1", "Stored thought", "Done");
+    render(() => (
+      <MessagePartRenderer
+        msg={msg}
+        isLoading={false}
+        nextToolCallTick={0}
+      />
+    ));
+
+    // Content hidden via CSS transition
+    const wrapper = screen.getByText("Stored thought").closest('[class*="overflow-hidden"]')!;
+    expect(wrapper.className).toContain("opacity-0");
+  });
+
   it("hides thinking content when reasoning panel is collapsed", () => {
     const msg = thinkingMsg("m1", "Hidden thought", "Final");
     render(() => (
       <MessagePartRenderer
         msg={msg}
-        isLoading={false}
+        isLoading={true}
         nextToolCallTick={0}
       />
     ));
