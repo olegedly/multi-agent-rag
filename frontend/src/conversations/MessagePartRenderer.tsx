@@ -120,7 +120,7 @@ function ToolCallPairRenderer(props: {
   nextToolCallTick: number;
 }) {
   return (
-    <div class="mt-2 mb-2">
+    <div class="mt-2.5">
       <ToolCallRenderer part={props.toolCall} />
       <Show when={props.toolResult}>
         {(tr) => (
@@ -137,11 +137,13 @@ function ToolCallPairRenderer(props: {
 
 function TextPartRenderer(props: { part: TextPart }) {
   return (
-    <div class="prose prose-sm max-w-none">
-      <SolidMarkdown
-        children={props.part.content}
-        remarkPlugins={[remarkGfm]}
-      />
+    <div class="mt-3">
+      <div class="prose prose-sm max-w-none">
+        <SolidMarkdown
+          children={props.part.content}
+          remarkPlugins={[remarkGfm]}
+        />
+      </div>
     </div>
   );
 }
@@ -154,29 +156,31 @@ function ThinkingPartRenderer(props: {
   // Start expanded only when created during active streaming.
   // When loaded from storage (isLoading=false), start collapsed.
   return (
-    <CollapsibleSection
-      label="Reasoned"
-      expanded={props.isLoading}
-      collapseOnTick={props.nextToolCallTick}
-      leadingIcon={
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          class="h-3.5 w-3.5 shrink-0 rotate-90"
-          viewBox="0 0 20 20"
-          fill="currentColor"
-        >
-          <path
-            fill-rule="evenodd"
-            d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
-            clip-rule="evenodd"
-          />
-        </svg>
-      }
-    >
-      <div class="mt-1 p-2 rounded-lg bg-(--bg-primary) border border-(--border) text-xs text-(--text-secondary) italic whitespace-pre-wrap leading-relaxed">
-        {props.part.content}
-      </div>
-    </CollapsibleSection>
+    <div class="mt-4">
+      <CollapsibleSection
+        label="Reasoned"
+        expanded={props.isLoading}
+        collapseOnTick={props.nextToolCallTick}
+        leadingIcon={
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-3.5 w-3.5 shrink-0 rotate-90"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path
+              fill-rule="evenodd"
+              d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
+              clip-rule="evenodd"
+            />
+          </svg>
+        }
+      >
+        <div class="mt-1 p-2 rounded-lg bg-(--bg-primary) border border-(--border) text-xs text-(--text-secondary) italic whitespace-pre-wrap leading-relaxed">
+          {props.part.content}
+        </div>
+      </CollapsibleSection>
+    </div>
   );
 }
 
@@ -238,7 +242,7 @@ function ToolResultPartRenderer(props: {
   nextToolCallTick: number;
 }) {
   return (
-    <div class="pl-5">
+    <div class="mt-2 pl-5">
       <CollapsibleSection
         label="Result"
         expanded={props.isNew}

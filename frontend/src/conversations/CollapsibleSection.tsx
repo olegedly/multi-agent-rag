@@ -96,7 +96,7 @@ export function CollapsibleSection(props: CollapsibleSectionProps) {
   };
 
   return (
-    <div class="mb-2">
+    <div>
       <button
         onClick={toggle}
         class="flex items-center gap-1.5 text-xs font-medium text-(--text-secondary) hover:text-(--accent) transition-colors cursor-pointer w-full text-left"
