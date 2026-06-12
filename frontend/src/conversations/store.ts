@@ -132,6 +132,18 @@ export function createConversationStore(): ConversationStore {
     },
 
     createNew() {
+      // If there's already a fresh empty conversation (title "New conversation",
+      // no messages), switch to it instead of creating a duplicate. This
+      // prevents the "+ New" button from piling up empty conversations.
+      const existing = conversations().find(
+        (c) => c.title === "New conversation" && c.messages.length === 0,
+      );
+      if (existing) {
+        setCurrentId(existing.id);
+        saveLastOpened(existing.id);
+        return existing.id;
+      }
+
       const conv = createConversation();
       const convs = [...conversations(), conv];
       saveConversation(conv);

@@ -81,7 +81,7 @@ def _convert_dict_messages(messages: list[dict]) -> list[BaseMessage]:
                     }
                 )
             lc_messages.append(
-                AIMessage(content=content, tool_calls=lc_tool_calls)
+                AIMessage(content=content or "", tool_calls=lc_tool_calls)
             )
         elif role == "system":
             lc_messages.append(SystemMessage(content=content))
@@ -93,7 +93,51 @@ def _convert_dict_messages(messages: list[dict]) -> list[BaseMessage]:
             )
         else:
             lc_messages.append(HumanMessage(content=content))
+
+    # ── Sanitise orphaned tool-calls ────────────────────────────────
+    # After the user clicks Stop, the frontend may re-send a conversation
+    # where an assistant message has tool_calls with no matching tool
+    # result (the Stop interrupted the stream before the result arrived).
+    # The OpenAI API rejects such sequences with a 400 error, so we strip
+    # any tool_call whose id lacks a corresponding ToolMessage.
+    lc_messages = _strip_orphaned_tool_calls(lc_messages)
     return lc_messages
+
+
+def _strip_orphaned_tool_calls(
+    lc_messages: list[BaseMessage],
+) -> list[BaseMessage]:
+    """Remove tool_calls from AIMessages that lack matching ToolMessages.
+
+    The LLM provider (OpenAI / OpenRouter) rejects conversations where
+    an ``AIMessage`` has ``tool_calls`` without corresponding
+    ``ToolMessage`` results. This occurs naturally when the user clicks
+    Stop mid-stream and the client re-sends the conversation on the
+    next query.
+
+    The pass is global-then-local: collect all tool_call_ids that appear
+    in any ``ToolMessage``, then strip any ``AIMessage.tool_call`` whose
+    id is not in that set.
+    """
+    resolved_ids: set[str] = set()
+    for msg in lc_messages:
+        if isinstance(msg, ToolMessage):
+            resolved_ids.add(msg.tool_call_id)
+
+    result: list[BaseMessage] = []
+    for msg in lc_messages:
+        if isinstance(msg, AIMessage):
+            surviving = [
+                tc for tc in msg.tool_calls if tc["id"] in resolved_ids
+            ]
+            # Preserve the AIMessage even when all tool_calls are
+            # stripped — the text content (if any) still carries forward.
+            result.append(
+                AIMessage(content=msg.content or "", tool_calls=surviving)
+            )
+        else:
+            result.append(msg)
+    return result
 
 
 async def run_pipeline(

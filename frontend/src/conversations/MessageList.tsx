@@ -18,6 +18,10 @@ export function MessageList(props: MessageListProps) {
   const handleScroll = () => {
     const el = scrollContainerRef;
     if (!el) return;
+    // If content fits in the viewport, scrolling is a no-op.
+    // Don't let it cancel future stick-to-bottom behavior once
+    // content grows past the viewport.
+    if (el.scrollHeight <= el.clientHeight) return;
     const threshold = 100;
     isUserAtBottom =
       el.scrollHeight - el.scrollTop - el.clientHeight < threshold;

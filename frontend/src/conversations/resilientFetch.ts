@@ -55,6 +55,16 @@ export function resilientFetch(
 
     const wrappedStream = new ReadableStream({
       async pull(controller) {
+        // If the abort signal has already fired, throw an AbortError
+        // so the library's streamResponse() catch block detects
+        // err.name === "AbortError" and returns false (preventing
+        // auto-continuation).
+        if (signal.aborted) {
+          const err = new Error("The operation was aborted");
+          err.name = "AbortError";
+          controller.error(err);
+          return;
+        }
         try {
           const { done, value } = await originalReader.read();
           if (done) {
@@ -63,10 +73,20 @@ export function resilientFetch(
             controller.enqueue(value);
           }
         } catch (err) {
-          controller.error(err);
+          // If the reader was cancelled concurrently, propagate as
+          // AbortError so the library handles it correctly.
+          if (signal.aborted) {
+            const abortErr = new Error("The operation was aborted");
+            abortErr.name = "AbortError";
+            controller.error(abortErr);
+          } else {
+            controller.error(err);
+          }
         }
       },
       cancel() {
+        // When the library's consumeSubscription cancels the stream,
+        // cleanly cancel the original reader.
         originalReader.cancel().catch(() => {});
       },
     });

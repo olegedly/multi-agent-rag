@@ -129,6 +129,46 @@ describe("createToolResultTracker", () => {
     });
   });
 
+  it("does not tick when loading stays false (no false positive on stop)", async () => {
+    await createRoot(async () => {
+      const [msgs] = createSignal<UIMessage[]>([]);
+      const tracker = createToolResultTracker(msgs, () => false);
+      const initialTick = tracker.nextToolCallTick();
+
+      // Multiple re-renders while loading=false — tick must not change
+      await tick();
+      expect(tracker.nextToolCallTick()).toBe(initialTick);
+
+      await tick();
+      expect(tracker.nextToolCallTick()).toBe(initialTick);
+    });
+  });
+
+  it("resets prevUnpairedCount when loading transitions from true to false", async () => {
+    await createRoot(async () => {
+      const [msgs, setMsgs] = createSignal<UIMessage[]>([]);
+      const [loading, setLoading] = createSignal(true);
+      const tracker = createToolResultTracker(msgs, loading);
+
+      // Stream in an unpaired call so prevUnpairedCount bumps
+      setMsgs([toolCallMsg("call-1")]);
+      await tick();
+      const afterFirst = tracker.nextToolCallTick();
+
+      // Loading ends — prevUnpairedCount should reset
+      setLoading(false);
+      await tick();
+
+      // New stream starts with a different unpaired call
+      setLoading(true);
+      setMsgs([toolCallMsg("call-2")]);
+      await tick();
+
+      // Should tick again because prevUnpairedCount was reset to 0
+      expect(tracker.nextToolCallTick()).toBe(afterFirst + 1);
+    });
+  });
+
   it("ticks once per new unpaired call even when multiple appear at once", async () => {
     await createRoot(async () => {
       const [msgs, setMsgs] = createSignal<UIMessage[]>([]);

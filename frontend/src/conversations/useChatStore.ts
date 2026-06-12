@@ -1,4 +1,4 @@
-import { onCleanup, onMount } from "solid-js";
+import { onCleanup, onMount, createSignal } from "solid-js";
 import { fetchServerSentEvents, useChat } from "@tanstack/ai-solid";
 import type { UIMessage } from "@tanstack/ai-client";
 import { createConversationStore } from "./store";
@@ -15,6 +15,10 @@ export function useChatStore() {
       fetchClient: resilientFetch,
     }),
   });
+
+  // Tick that increments when a new conversation is created, so
+  // ChatInput can re-focus after the creation.
+  const [focusTick, setFocusTick] = createSignal(0);
 
   // Save current messages when switching conversations
   const saveCurrent = () => {
@@ -36,10 +40,6 @@ export function useChatStore() {
       chat.stop();
     }
     saveCurrent();
-    // Clear messages and error state before loading saved messages.
-    // We use chat.clear() (not chat.setMessages([])) because clear()
-    // also calls setError(undefined), clearing any stale error from
-    // the previous conversation.
     chat.clear();
     store.switchTo(id);
     const msgs = store.getCurrentMessages();
@@ -53,10 +53,10 @@ export function useChatStore() {
     if (wasLoading) {
       chat.stop();
     }
-    // Clear current chat (messages + error state)
     chat.clear();
     store.createNew();
     localStorage.removeItem(SAVE_KEY);
+    setFocusTick((t) => t + 1);
   };
 
   // Delete current conversation and switch
@@ -66,20 +66,45 @@ export function useChatStore() {
     if (wasLoading) {
       chat.stop();
     }
-    // Don't save — user explicitly deleted
-    // Clear messages and error state first
     chat.clear();
     store.removeCurrent();
     const msgs = store.getCurrentMessages();
     chat.setMessages(msgs);
   };
 
+  const stop = () => {
+    chat.stop();
+    const msgs = chat.messages();
+    const updated = msgs.map((msg) => {
+      if (msg.role !== "assistant") return msg;
+      let changed = false;
+      const newParts = msg.parts.map((part) => {
+        if (part.type === "tool-call") {
+          if (part.state !== "complete") {
+            changed = true;
+            return { ...part, state: "complete" as const };
+          }
+        }
+        if (part.type === "tool-result") {
+          if (part.state !== "complete") {
+            changed = true;
+            return { ...part, state: "complete" as const };
+          }
+        }
+        return part;
+      });
+      if (!changed) return msg;
+      return { ...msg, parts: newParts };
+    });
+    if (updated !== msgs) {
+      setTimeout(() => chat.setMessages(updated), 0);
+    }
+  };
+
   // Send message with auto-title
   const sendMessage = (text: string) => {
-    // Derive title from the message being sent
     const msgs = chat.messages();
     if (msgs.length === 0) {
-      // First message — set title before sending
       store.updateCurrentTitle(generateTitle(text));
     }
     chat.sendMessage(text);
@@ -92,7 +117,6 @@ export function useChatStore() {
       chat.setMessages(initialMsgs);
     }
 
-    // beforeunload safety net
     const handleBeforeUnload = () => {
       const msgs = chat.messages();
       if (msgs.length > 0) {
@@ -107,25 +131,21 @@ export function useChatStore() {
   });
 
   return {
-    // Store state
     conversations: store.conversations,
     currentId: store.currentId,
     storageError: store.storageError,
     dismissStorageError: () => store.setStorageError(null),
-
-    // Chat state (from useChat)
     messages: chat.messages,
     isLoading: () => chat.isLoading(),
     error: () => chat.error()?.message ?? null,
     status: chat.status,
     connectionStatus: chat.connectionStatus,
-
-    // Actions
     sendMessage,
-    stop: chat.stop,
+    stop,
     clear: chat.clear,
     switchTo,
     createNew,
+    focusTick,
     deleteCurrent,
   };
 }

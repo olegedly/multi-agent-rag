@@ -108,11 +108,19 @@ def create_app(
                     thread_id=thread_id,
                     run_id=run_id,
                 ):
+                    # Check if the client disconnected before yielding.
+                    # If so, stop streaming immediately instead of
+                    # continuing to generate tokens the client will
+                    # discard.
+                    if await request.is_disconnected():
+                        return
                     yield encoder.encode(event)  # type: ignore[arg-type]
             except Exception as exc:
-                yield encoder.encode(
-                    RunErrorEvent(message=str(exc), timestamp=int(time.time() * 1000))  # type: ignore[call-arg]
-                )
+                # Still emit the error if client is connected
+                if not await request.is_disconnected():
+                    yield encoder.encode(
+                        RunErrorEvent(message=str(exc), timestamp=int(time.time() * 1000))  # type: ignore[call-arg]
+                    )
 
         return StreamingResponse(
             _stream(),

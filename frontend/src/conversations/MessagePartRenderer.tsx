@@ -49,7 +49,10 @@ export function MessagePartRenderer(props: MessagePartRendererProps) {
                 msgId={msg.id}
                 isNewToolResult={
                   paired.toolResult
-                    ? (isNewToolResult?.(msg.id, paired.toolResult.toolCallId) ?? false)
+                    ? (isNewToolResult?.(
+                        msg.id,
+                        paired.toolResult.toolCallId,
+                      ) ?? false)
                     : false
                 }
                 nextToolCallTick={nextToolCallTick}
@@ -82,11 +85,13 @@ function PartRenderer(props: {
 }) {
   return (
     <>
-      {props.part.type === "text" && (
-        <TextPartRenderer part={props.part} />
-      )}
+      {props.part.type === "text" && <TextPartRenderer part={props.part} />}
       {props.part.type === "thinking" && (
-        <ThinkingPartRenderer part={props.part} />
+        <ThinkingPartRenderer
+          part={props.part}
+          isLoading={props.isLoading}
+          nextToolCallTick={props.nextToolCallTick}
+        />
       )}
       {props.part.type === "tool-result" && (
         <ToolResultPartRenderer
@@ -116,7 +121,7 @@ function ToolCallPairRenderer(props: {
   nextToolCallTick: number;
 }) {
   return (
-    <div class="mt-2 mb-2">
+    <div class="mt-2.5">
       <ToolCallRenderer part={props.toolCall} />
       <Show when={props.toolResult}>
         {(tr) => (
@@ -133,38 +138,50 @@ function ToolCallPairRenderer(props: {
 
 function TextPartRenderer(props: { part: TextPart }) {
   return (
-    <div class="prose prose-sm max-w-none">
-      <SolidMarkdown
-        children={props.part.content}
-        remarkPlugins={[remarkGfm]}
-      />
+    <div class="mt-3">
+      <div class="prose prose-sm max-w-none">
+        <SolidMarkdown
+          children={props.part.content}
+          remarkPlugins={[remarkGfm]}
+        />
+      </div>
     </div>
   );
 }
 
-function ThinkingPartRenderer(props: { part: ThinkingPart }) {
+function ThinkingPartRenderer(props: {
+  part: ThinkingPart;
+  isLoading: boolean;
+  nextToolCallTick: number;
+}) {
+  // Start expanded only when created during active streaming.
+  // When loaded from storage (isLoading=false), start collapsed.
   return (
-    <CollapsibleSection
-      label="Reasoned"
-      leadingIcon={
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          class="h-3.5 w-3.5 shrink-0 rotate-90"
-          viewBox="0 0 20 20"
-          fill="currentColor"
-        >
-          <path
-            fill-rule="evenodd"
-            d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
-            clip-rule="evenodd"
-          />
-        </svg>
-      }
-    >
-      <div class="mt-1 p-2 rounded-lg bg-(--bg-primary) border border-(--border) text-xs text-(--text-secondary) italic whitespace-pre-wrap leading-relaxed">
-        {props.part.content}
-      </div>
-    </CollapsibleSection>
+    <div class="mt-4">
+      <CollapsibleSection
+        label="Reasoned"
+        expanded={props.isLoading}
+        collapseOnTick={props.nextToolCallTick}
+        leadingIcon={
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-3.5 w-3.5 shrink-0 text-yellow-200"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path
+              fill-rule="evenodd"
+              d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1zm0 10a1 1 0 011 1v1h1a1 1 0 110 2H6v1a1 1 0 01-2 0v-1H3a1 1 0 110-2h1v-1a1 1 0 011-1zM12 2a1 1 0 01.967.744L14.146 7.2 17.5 9.134a1 1 0 010 1.732l-3.354 1.935-1.18 4.455a1 1 0 01-1.933 0L9.854 12.8 6.5 10.866a1 1 0 010-1.732l3.354-1.935 1.18-4.455A1 1 0 0112 2z"
+              clip-rule="evenodd"
+            />
+          </svg>
+        }
+      >
+        <div class="mt-1 p-2 rounded-lg bg-(--bg-primary) border border-(--border) text-xs text-(--text-secondary) italic whitespace-pre-wrap leading-relaxed">
+          {props.part.content}
+        </div>
+      </CollapsibleSection>
+    </div>
   );
 }
 
@@ -226,12 +243,13 @@ function ToolResultPartRenderer(props: {
   nextToolCallTick: number;
 }) {
   return (
-    <div class="pl-5">
+    <div class="mt-2 pl-5">
       <CollapsibleSection
         label="Result"
         expanded={props.isNew}
         autoCollapseMs={props.isNew ? 1500 : undefined}
         collapseOnTick={props.nextToolCallTick}
+        resetTimerOn={props.part.content}
         leadingIcon={
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -270,5 +288,7 @@ function renderToolResultContent(
     return formatToolResult(content);
   }
   // Still streaming — show raw content without YAML conversion
-  return typeof content === "string" ? content : JSON.stringify(content, null, 2);
+  return typeof content === "string"
+    ? content
+    : JSON.stringify(content, null, 2);
 }

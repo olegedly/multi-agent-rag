@@ -100,6 +100,7 @@ const App = () => {
             onSend={(text) => chat.sendMessage(text)}
             onStop={() => chat.stop()}
             onDismissStorageError={() => chat.dismissStorageError()}
+            focusTick={chat.focusTick()}
           />
         </main>
       </div>

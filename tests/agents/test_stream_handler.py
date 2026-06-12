@@ -14,6 +14,7 @@ from ag_ui.core.events import (
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
+    StepStartedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -263,17 +264,21 @@ class TestReasoning:
         return h
 
     def test_reasoning_opens_block(self, handler):
-        """Chunks with reasoning_content emit REASONING_MESSAGE_START + CONTENT."""
+        """Chunks with reasoning_content emit STEP_STARTED + REASONING_MESSAGE_START + CONTENT."""
         chunk = AIMessageChunk(content="", additional_kwargs={"reasoning_content": "Let me think"})
         handler.observe(chunk, {"langgraph_node": "agent"})
         events = handler.drain()
 
-        assert len(events) >= 2
-        start = events[0]
+        assert len(events) >= 3
+        step = events[0]
+        assert isinstance(step, StepStartedEvent)
+        assert step.step_name == "reasoning"
+
+        start = events[1]
         assert isinstance(start, ReasoningMessageStartEvent)
         assert start.message_id is not None
 
-        content = events[1]
+        content = events[2]
         assert isinstance(content, ReasoningMessageContentEvent)
         assert content.delta == "Let me think"
 

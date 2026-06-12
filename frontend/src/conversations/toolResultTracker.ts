@@ -33,23 +33,19 @@ export function createToolResultTracker(
     return true;
   };
 
-  // Track unpaired tool-calls using a signal, not mutable state
+  // Track unpaired tool-calls using a signal, not mutable state.
+  // Reset prevUnpairedCount when loading ends so a fresh stream
+  // starts from a clean baseline.
   // load `loading()` inside the effect so it reruns when loading toggles
   createEffect(() => {
-    if (!loading()) return;
+    if (!loading()) {
+      prevUnpairedCount = 0;
+      return;
+    }
 
     // We need to eagerly load messages() inside the effect so tracking
     // participates in the reactive graph
     const msgs = messages();
-
-    const seenAtThisLoad = new Set<string>();
-    for (const msg of msgs) {
-      for (const part of msg.parts) {
-        if (part.type === "tool-call") {
-          seenAtThisLoad.add(`${msg.id}:${part.id}`);
-        }
-      }
-    }
 
     const unpairedCount = msgs.reduce((count, msg) => {
       return (
@@ -69,14 +65,6 @@ export function createToolResultTracker(
       setNextToolCallTick((t) => t + 1);
     }
     prevUnpairedCount = unpairedCount;
-  });
-
-  // When loading transitions to false, reset the prev count so next load
-  // doesn't incorrectly skip a tick
-  createEffect(() => {
-    if (!loading()) {
-      prevUnpairedCount = 0;
-    }
   });
 
   return { isNew, nextToolCallTick };
