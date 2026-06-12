@@ -129,6 +129,39 @@ describe("createToolResultTracker", () => {
     });
   });
 
+  it("ticks when loading transitions from true to false (collapse on stop)", async () => {
+    await createRoot(async () => {
+      const [msgs] = createSignal<UIMessage[]>([]);
+      const [loading, setLoading] = createSignal(true);
+      const tracker = createToolResultTracker(msgs, loading);
+      const initialTick = tracker.nextToolCallTick();
+
+      // Loading stays true — no tick yet
+      await tick();
+      expect(tracker.nextToolCallTick()).toBe(initialTick);
+
+      // Loading goes false — tick should increment
+      setLoading(false);
+      await tick();
+      expect(tracker.nextToolCallTick()).toBe(initialTick + 1);
+    });
+  });
+
+  it("does not tick when loading stays false (no false positive on stop)", async () => {
+    await createRoot(async () => {
+      const [msgs] = createSignal<UIMessage[]>([]);
+      const tracker = createToolResultTracker(msgs, () => false);
+      const initialTick = tracker.nextToolCallTick();
+
+      // Multiple re-renders while loading=false — tick must not change
+      await tick();
+      expect(tracker.nextToolCallTick()).toBe(initialTick);
+
+      await tick();
+      expect(tracker.nextToolCallTick()).toBe(initialTick);
+    });
+  });
+
   it("ticks once per new unpaired call even when multiple appear at once", async () => {
     await createRoot(async () => {
       const [msgs, setMsgs] = createSignal<UIMessage[]>([]);

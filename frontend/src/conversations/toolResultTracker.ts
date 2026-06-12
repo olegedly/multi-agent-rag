@@ -76,10 +76,10 @@ export function createToolResultTracker(
   // all expanded result blocks. This ensures that when the user clicks
   // Stop, any tool result that was expanded during streaming gets
   // collapsed immediately.
-  let prevLoading = true;
+  let prevLoading: boolean | undefined;
   createEffect(() => {
     const nowLoading = loading();
-    if (prevLoading && !nowLoading) {
+    if (prevLoading !== undefined && prevLoading && !nowLoading) {
       // Loading just ended — tick once to collapse
       setNextToolCallTick((t) => t + 1);
     }
