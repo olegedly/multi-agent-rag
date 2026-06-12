@@ -33,23 +33,19 @@ export function createToolResultTracker(
     return true;
   };
 
-  // Track unpaired tool-calls using a signal, not mutable state
+  // Track unpaired tool-calls using a signal, not mutable state.
+  // Reset prevUnpairedCount when loading ends so a fresh stream
+  // starts from a clean baseline.
   // load `loading()` inside the effect so it reruns when loading toggles
   createEffect(() => {
-    if (!loading()) return;
+    if (!loading()) {
+      prevUnpairedCount = 0;
+      return;
+    }
 
     // We need to eagerly load messages() inside the effect so tracking
     // participates in the reactive graph
     const msgs = messages();
-
-    const seenAtThisLoad = new Set<string>();
-    for (const msg of msgs) {
-      for (const part of msg.parts) {
-        if (part.type === "tool-call") {
-          seenAtThisLoad.add(`${msg.id}:${part.id}`);
-        }
-      }
-    }
 
     const unpairedCount = msgs.reduce((count, msg) => {
       return (
@@ -69,24 +65,6 @@ export function createToolResultTracker(
       setNextToolCallTick((t) => t + 1);
     }
     prevUnpairedCount = unpairedCount;
-  });
-
-  // When loading transitions to false (stream ended — either by normal
-  // completion or by the Stop button), increment the tick to collapse
-  // all expanded result blocks. This ensures that when the user clicks
-  // Stop, any tool result that was expanded during streaming gets
-  // collapsed immediately.
-  let prevLoading: boolean | undefined;
-  createEffect(() => {
-    const nowLoading = loading();
-    if (prevLoading !== undefined && prevLoading && !nowLoading) {
-      // Loading just ended — tick once to collapse
-      setNextToolCallTick((t) => t + 1);
-    }
-    prevLoading = nowLoading;
-    if (!nowLoading) {
-      prevUnpairedCount = 0;
-    }
   });
 
   return { isNew, nextToolCallTick };

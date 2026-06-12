@@ -1,7 +1,6 @@
 import {
   createSignal,
   createEffect,
-  onMount,
   onCleanup,
   on,
   useContext,
@@ -20,6 +19,12 @@ export interface CollapsibleSectionProps {
   autoCollapseMs?: number;
   /** Collapse immediately when this signal value changes to a non-zero value */
   collapseOnTick?: number;
+  /**
+   * When this value changes, the auto-collapse timer resets.
+   * Used during streaming: pass the tool result content so the timer
+   * restarts each time a new chunk arrives.
+   */
+  resetTimerOn?: unknown;
 }
 
 export function CollapsibleSection(props: CollapsibleSectionProps) {
@@ -28,9 +33,14 @@ export function CollapsibleSection(props: CollapsibleSectionProps) {
   let userInteracted = false;
   let timerRef: number | undefined;
 
-  // Auto-collapse timer
+  // Auto-collapse timer — resets whenever children content changes,
+  // so streaming updates extend the visible window via the
+  // resetTimerOn prop (passed from the parent on content update).
   const setupAutoCollapse = () => {
-    if (timerRef !== undefined) clearTimeout(timerRef);
+    if (timerRef !== undefined) {
+      clearTimeout(timerRef);
+      timerRef = undefined;
+    }
     if (props.autoCollapseMs && expanded() && !userInteracted) {
       timerRef = window.setTimeout(() => {
         if (!userInteracted) {
@@ -41,12 +51,24 @@ export function CollapsibleSection(props: CollapsibleSectionProps) {
     }
   };
 
-  onMount(() => {
-    setupAutoCollapse();
-  });
+  // Start the timer on mount and reset it whenever streaming content updates.
+  // The resetTimerOn prop changes each time new content arrives, causing
+  // setupAutoCollapse to clear the old timer and start a fresh one.
+  createEffect(
+    on(
+      () => props.resetTimerOn,
+      () => {
+        setupAutoCollapse();
+      },
+      { defer: false },
+    ),
+  );
 
   onCleanup(() => {
-    if (timerRef !== undefined) clearTimeout(timerRef);
+    if (timerRef !== undefined) {
+      clearTimeout(timerRef);
+      timerRef = undefined;
+    }
   });
 
   // Collapse when tick changes to >0 (deferred so initial tick doesn't collapse on mount)

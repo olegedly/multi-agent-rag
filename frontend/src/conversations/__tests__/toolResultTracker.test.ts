@@ -129,24 +129,6 @@ describe("createToolResultTracker", () => {
     });
   });
 
-  it("ticks when loading transitions from true to false (collapse on stop)", async () => {
-    await createRoot(async () => {
-      const [msgs] = createSignal<UIMessage[]>([]);
-      const [loading, setLoading] = createSignal(true);
-      const tracker = createToolResultTracker(msgs, loading);
-      const initialTick = tracker.nextToolCallTick();
-
-      // Loading stays true — no tick yet
-      await tick();
-      expect(tracker.nextToolCallTick()).toBe(initialTick);
-
-      // Loading goes false — tick should increment
-      setLoading(false);
-      await tick();
-      expect(tracker.nextToolCallTick()).toBe(initialTick + 1);
-    });
-  });
-
   it("does not tick when loading stays false (no false positive on stop)", async () => {
     await createRoot(async () => {
       const [msgs] = createSignal<UIMessage[]>([]);
@@ -159,6 +141,31 @@ describe("createToolResultTracker", () => {
 
       await tick();
       expect(tracker.nextToolCallTick()).toBe(initialTick);
+    });
+  });
+
+  it("resets prevUnpairedCount when loading transitions from true to false", async () => {
+    await createRoot(async () => {
+      const [msgs, setMsgs] = createSignal<UIMessage[]>([]);
+      const [loading, setLoading] = createSignal(true);
+      const tracker = createToolResultTracker(msgs, loading);
+
+      // Stream in an unpaired call so prevUnpairedCount bumps
+      setMsgs([toolCallMsg("call-1")]);
+      await tick();
+      const afterFirst = tracker.nextToolCallTick();
+
+      // Loading ends — prevUnpairedCount should reset
+      setLoading(false);
+      await tick();
+
+      // New stream starts with a different unpaired call
+      setLoading(true);
+      setMsgs([toolCallMsg("call-2")]);
+      await tick();
+
+      // Should tick again because prevUnpairedCount was reset to 0
+      expect(tracker.nextToolCallTick()).toBe(afterFirst + 1);
     });
   });
 

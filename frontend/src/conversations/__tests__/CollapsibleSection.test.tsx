@@ -139,6 +139,41 @@ describe("CollapsibleSection", () => {
     expect(wrapper.className).not.toContain("opacity-0");
   });
 
+  it("resets auto-collapse timer when resetTimerOn value changes (streaming update)", async () => {
+    vi.useFakeTimers();
+    const [content, setContent] = createSignal("First chunk");
+
+    render(() => (
+      <CollapsibleSection label="Results" autoCollapseMs={500} resetTimerOn={content()}>
+        <p>{content()}</p>
+      </CollapsibleSection>
+    ));
+
+    const wrapper = screen.getByText("First chunk").closest('[class*="overflow-hidden"]')!;
+    expect(wrapper.className).not.toContain("opacity-0");
+
+    // Advance to just before original timeout
+    await vi.advanceTimersByTimeAsync(400);
+
+    // Content updates (simulating new streamed chunk arriving)
+    setContent("Second chunk");
+
+    // Flush Solid's reactive microtask so createEffect(on(resetTimerOn)) re-runs
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Advance past original deadline — should still be expanded if timer was reset
+    await vi.advanceTimersByTimeAsync(200); // 600ms total, past original 500ms deadline
+    const updatedEl = screen.getByText("Second chunk");
+    const updatedWrapper = updatedEl.closest('[class*="overflow-hidden"]')!;
+    expect(updatedWrapper.className).not.toContain("opacity-0");
+
+    // Advance past the new deadline (500ms after update)
+    await vi.advanceTimersByTimeAsync(400); // 1000ms total
+    expect(updatedWrapper.className).toContain("opacity-0");
+
+    vi.useRealTimers();
+  });
+
   it("cleans up timer on unmount", () => {
     vi.useFakeTimers();
     const { unmount } = render(() => (
