@@ -1,4 +1,4 @@
-import { For, Show, createEffect, onCleanup } from "solid-js";
+import { For, Show, createEffect, createSignal } from "solid-js";
 import type { UIMessage } from "@tanstack/ai-client";
 import { MessagePartRenderer } from "./MessagePartRenderer";
 
@@ -13,7 +13,7 @@ export interface MessageListProps {
 export function MessageList(props: MessageListProps) {
   let messagesEndRef: HTMLDivElement | undefined;
   let scrollContainerRef: HTMLDivElement | undefined;
-  let isUserAtBottom = true;
+  const [isUserAtBottom, setIsUserAtBottom] = createSignal(true);
 
   const handleScroll = () => {
     const el = scrollContainerRef;
@@ -23,15 +23,34 @@ export function MessageList(props: MessageListProps) {
     // content grows past the viewport.
     if (el.scrollHeight <= el.clientHeight) return;
     const threshold = 100;
-    isUserAtBottom =
-      el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    setIsUserAtBottom(
+      el.scrollHeight - el.scrollTop - el.clientHeight < threshold,
+    );
   };
 
+  // Re-engage stick-to-bottom whenever a new stream begins.
+  // Without this, a cancelled session (user scrolled up) would stay
+  // cancelled across queries.
   createEffect(() => {
-    props.messages();
-    if (isUserAtBottom) {
-      queueMicrotask(() => {
-        messagesEndRef?.scrollIntoView();
+    if (props.isLoading) {
+      setIsUserAtBottom(true);
+    }
+  });
+
+  // Auto-scroll when content grows. Dependencies:
+  // - messages(): core content changes
+  // - nextToolCallTick: tool result arrivals/collapses (even if messages()
+  //   doesn't structurally dirty the signal Solid tracks)
+  // - isLoading: pagination boundary for large responses
+  createEffect(() => {
+    void props.messages();
+    void props.nextToolCallTick;
+    void props.isLoading;
+    if (isUserAtBottom()) {
+      // Use requestAnimationFrame so the scroll targets the post-layout
+      // position, not whatever the DOM looked like mid-microtask.
+      requestAnimationFrame(() => {
+        messagesEndRef?.scrollIntoView({ block: "end" });
       });
     }
   });
