@@ -71,6 +71,68 @@ describe("resilientFetch", () => {
     await expect(reader.read()).rejects.toHaveProperty("name", "AbortError");
   });
 
+  /**
+   * Integration-style tracer bullet: after a normal stream read followed
+   * by abort, the stream stops cleanly — either by returning {done: true}
+   * (the well-behaved runtime path where cancel resolves the pending read
+   * with done) or by rejecting with AbortError (the defensive path where
+   * cancel throws and the catch block converts it). Both outcomes
+   * represent a clean stop with no user-visible error.
+   *
+   * Unlike the mock-based test above, this uses a real ReadableStream
+   * and exercises the actual cancel→pull→signal.aborted flow through
+   * resilientFetch's stream wrapper without mocking getReader.
+   */
+  it("stops cleanly (done or AbortError) after abort following a normal read", async () => {
+    let controllerRef: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controllerRef = controller;
+        // Enqueue one chunk so the first read() succeeds
+        controller.enqueue(new TextEncoder().encode("data: hello\n\n"));
+      },
+    });
+    const response = new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+
+    const ac = new AbortController();
+    const wrapped = await resilientFetch("http://test/chat", {
+      signal: ac.signal,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+
+    const reader = wrapped.body!.getReader();
+
+    // First read: consumes the buffered chunk
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect(new TextDecoder().decode(first.value)).toBe("data: hello\n\n");
+
+    // Issue a second read — this triggers pull() which calls
+    // originalReader.read() and blocks (no more data enqueued).
+    const secondPromise = reader.read();
+
+    // Abort the signal. The abort handler calls originalReader.cancel().
+    // In jsdom this resolves the pending read with {done: true}, so
+    // pull() calls controller.close() and the read resolves with
+    // {done: true}. In other runtimes it may reject, triggering the
+    // defensive catch→AbortError path.
+    ac.abort();
+
+    // Both {done: true} and AbortError are acceptable clean-stop outcomes.
+    try {
+      const result = await secondPromise;
+      expect(result.done).toBe(true);
+    } catch (e: unknown) {
+      expect((e as Error).name).toBe("AbortError");
+    }
+  });
+
   it("passes through data correctly when not aborted", async () => {
     const body = new ReadableStream<Uint8Array>({
       start(controller) {

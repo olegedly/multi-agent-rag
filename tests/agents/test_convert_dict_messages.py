@@ -151,7 +151,26 @@ class TestConvertDictMessages:
         assert len(assistant.tool_calls) == 1
         assert assistant.tool_calls[0]["id"] == "call-paired"
 
-    # ── Tracer bullet #5 ───────────────────────────────────────────────
+    # ── Tracer bullet #6 ───────────────────────────────────────────────
+
+    def test_orphaned_all_stripped_empty_content(self) -> None:
+        """When all tool_calls are orphaned and the message has None
+        content, the result is an empty-string AIMessage with no
+        tool_calls — harmless and valid for the LLM provider."""
+        messages = [
+            {"role": "user", "content": "Search"},
+            _tool_call_agent_msg("call-lone-1"),
+            {"role": "user", "content": "Follow up"},
+        ]
+
+        result = _convert_dict_messages(messages)
+
+        assert len(result) == 3
+        assistant = _as_ai(result[1])
+        assert assistant.tool_calls == []
+        # content was None in the wire format; after stripping tool_calls
+        # it becomes the empty string so AIMessage validates
+        assert assistant.content == ""
 
     def test_orphaned_but_content_preserved(self) -> None:
         """When tool_calls are stripped but the assistant message also
