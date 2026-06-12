@@ -222,7 +222,13 @@ class StreamEventHandler:
             )
 
     def _observe_tool_result(self, chunk: ToolMessage) -> None:
-        """Emit TOOL_CALL_END + TOOL_CALL_RESULT for a ToolMessage."""
+        """Emit TOOL_CALL_END + TOOL_CALL_RESULT for a ToolMessage.
+
+        Also closes any open reasoning block — the next reasoning phase
+        from the LLM should start a fresh REASONING_MESSAGE block, not
+        accumulate into the previous one.
+        """
+        self._close_reasoning()
         tid = chunk.tool_call_id or ""
         raw_content = chunk.content
         self._open_tool_ids.discard(tid)
