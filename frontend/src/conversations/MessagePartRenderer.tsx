@@ -86,7 +86,10 @@ function PartRenderer(props: {
         <TextPartRenderer part={props.part} />
       )}
       {props.part.type === "thinking" && (
-        <ThinkingPartRenderer part={props.part} />
+        <ThinkingPartRenderer
+          part={props.part}
+          nextToolCallTick={props.nextToolCallTick}
+        />
       )}
       {props.part.type === "tool-result" && (
         <ToolResultPartRenderer
@@ -142,10 +145,11 @@ function TextPartRenderer(props: { part: TextPart }) {
   );
 }
 
-function ThinkingPartRenderer(props: { part: ThinkingPart }) {
+function ThinkingPartRenderer(props: { part: ThinkingPart; nextToolCallTick: number }) {
   return (
     <CollapsibleSection
       label="Reasoned"
+      collapseOnTick={props.nextToolCallTick}
       leadingIcon={
         <svg
           xmlns="http://www.w3.org/2000/svg"

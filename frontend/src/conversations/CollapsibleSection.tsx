@@ -4,8 +4,10 @@ import {
   onMount,
   onCleanup,
   on,
+  useContext,
   type JSX,
 } from "solid-js";
+import { StopCollapseContext } from "./ChatView";
 
 export interface CollapsibleSectionProps {
   label: string;
@@ -22,6 +24,7 @@ export interface CollapsibleSectionProps {
 
 export function CollapsibleSection(props: CollapsibleSectionProps) {
   const [expanded, setExpanded] = createSignal(props.expanded ?? true);
+  const stopTick = useContext(StopCollapseContext);
   let userInteracted = false;
   let timerRef: number | undefined;
 
@@ -62,6 +65,21 @@ export function CollapsibleSection(props: CollapsibleSectionProps) {
       },
       { defer: true },
     ),
+  );
+
+  // Collapse when stopTick ticks (stream end or Stop).
+  // Uses Context to work across <Index>/<For> boundaries.
+  createEffect(
+    on(stopTick, (tick) => {
+      if (tick > 0 && !userInteracted && expanded()) {
+        if (timerRef !== undefined) {
+          clearTimeout(timerRef);
+          timerRef = undefined;
+        }
+        setExpanded(false);
+        props.onToggle?.(false);
+      }
+    }),
   );
 
   const toggle = () => {

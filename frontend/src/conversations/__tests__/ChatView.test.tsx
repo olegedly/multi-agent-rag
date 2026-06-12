@@ -355,6 +355,38 @@ describe("ChatView", () => {
     expect(wrapper.className).toContain("opacity-0");
   });
 
+  it("collapses thinking block when loading stops (stream end or Stop)", async () => {
+    const [loading, setLoading] = createSignal(true);
+    const msg = thinkingMsg("Collapse me");
+
+    render(() => (
+      <ChatView
+        messages={() => [msg]}
+        isLoading={loading()}
+        error={null}
+        storageError={null}
+        onSend={() => {}}
+        onStop={() => {}}
+        onDismissStorageError={() => {}}
+      />
+    ));
+
+    // Content visible while loading
+    expect(screen.getByText("Collapse me")).toBeTruthy();
+    const wrapper = screen.getByText("Collapse me").closest('[class*="overflow-hidden"]')!;
+    expect(wrapper.className).not.toContain("opacity-0");
+
+    // Stop loading — triggers toolResultTracker's loading-true→false tick
+    setLoading(false);
+
+    // Flush Solid's reactive microtasks + DOM update
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    // After reactive update, thinking block should collapse
+    expect(wrapper.className).toContain("opacity-0");
+  });
+
   // ── Tracer bullet: ToolCallPart rendering ────────────────────────────
 
   it("renders completed tool call parts", () => {
