@@ -49,13 +49,20 @@ describe("ConversationStore", () => {
   });
 
   it("creates a new empty conversation and selects it", () => {
-    // Start with 1 auto-created
+    // Start with 1 auto-created. Give it a custom title so the
+    // duplicate-guard doesn't intercept createNew().
+    store.updateCurrentTitle("Existing convo");
     const firstId = store.currentId();
+
     store.createNew();
 
     expect(store.conversations().length).toBe(2);
     // New conversation becomes current
     expect(store.currentId()).not.toBe(firstId);
+    // New one has no messages
+    const current = store.conversations().find((c) => c.id === store.currentId());
+    expect(current!.title).toBe("New conversation");
+    expect(current!.messages).toEqual([]);
   });
 
   it("switches to another conversation by id", () => {
@@ -96,14 +103,19 @@ describe("ConversationStore", () => {
   });
 
   it("removes a conversation and switches to next", () => {
+    // Give the auto-created conversation a custom title so the
+    // duplicate-guard doesn't intercept createNew().
+    store.updateCurrentTitle("First");
     store.createNew(); // conversation 2
+    store.updateCurrentTitle("Second");
     const secondId = store.currentId();
     store.createNew(); // conversation 3
+    store.updateCurrentTitle("Third");
     const thirdId = store.currentId();
 
     // Switch to second and delete it
     store.switchTo(secondId);
-    const result = store.removeCurrent();
+    store.removeCurrent();
 
     // Should have switched to either first or third
     expect(store.conversations().length).toBe(2);
@@ -190,5 +202,51 @@ describe("ConversationStore", () => {
     console.warn = origWarn;
     // Should still have at least the auto-created one
     expect(store2!.conversations().length).toBeGreaterThanOrEqual(1);
+  });
+
+  // ── Tracer bullets: duplicate "New conversation" guard ────────────
+
+  it("does not create a second 'New conversation' when one already exists", () => {
+    // There is exactly 1 conversation (auto-created), title "New conversation",
+    // no messages.  Calling createNew() should switch to it, not duplicate it.
+    expect(store.conversations().length).toBe(1);
+    const existingId = store.currentId();
+
+    store.createNew();
+
+    // Still exactly 1 conversation
+    expect(store.conversations().length).toBe(1);
+    // Still on the same conversation
+    expect(store.currentId()).toBe(existingId);
+  });
+
+  it("does create a second 'New conversation' when the first has messages", () => {
+    // Save a message to the current conversation
+    store.saveCurrentMessages([
+      { id: "1", role: "user" as const, parts: [{ type: "text" as const, content: "Hello" }] },
+    ]);
+    // Title is still "New conversation" but it has messages — it's not fresh
+    const firstId = store.currentId();
+
+    store.createNew();
+
+    // Now there should be 2 conversations
+    expect(store.conversations().length).toBe(2);
+    expect(store.currentId()).not.toBe(firstId);
+    // The new one is also titled "New conversation"
+    const current = store.conversations().find((c) => c.id === store.currentId());
+    expect(current!.title).toBe("New conversation");
+    expect(current!.messages).toEqual([]);
+  });
+
+  it("does create a second 'New conversation' when the first has a custom title", () => {
+    store.updateCurrentTitle("My query about AI");
+    // Title is custom, even though no messages — user may have renamed
+    const firstId = store.currentId();
+
+    store.createNew();
+
+    expect(store.conversations().length).toBe(2);
+    expect(store.currentId()).not.toBe(firstId);
   });
 });
