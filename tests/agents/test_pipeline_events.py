@@ -262,6 +262,7 @@ class TestPipelineReasoningEvents:
         types = [type(e).__name__ for e in events]
         assert types == [
             "RunStartedEvent",
+            "StepStartedEvent",
             "ReasoningMessageStartEvent",
             "ReasoningMessageContentEvent",
             "ReasoningMessageContentEvent",

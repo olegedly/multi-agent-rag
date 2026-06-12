@@ -3,6 +3,10 @@
 When the agent reasons, calls a tool, receives the result, then reasons
 again, each reasoning phase should produce a separate REASONING_MESSAGE
 block — not all accumulate into one.
+
+The frontend's StreamProcessor ignores REASONING_MESSAGE_START/END
+(both no-ops). Separate thinking steps are keyed by stepId, which
+must be set via STEP_STARTED events.
 """
 
 from __future__ import annotations
@@ -10,8 +14,7 @@ from __future__ import annotations
 import pytest
 from ag_ui.core.events import (
     ReasoningMessageContentEvent,
-    ReasoningMessageEndEvent,
-    ReasoningMessageStartEvent,
+    StepStartedEvent,
 )
 from langchain_core.messages import AIMessageChunk, ToolMessage
 
@@ -29,73 +32,25 @@ class TestInterleavedReasoning:
         h.drain()  # discard RUN_STARTED
         return h
 
-    # ── Tracer bullet 1 ───────────────────────────────────────────────
+    # ── Tracer bullet 1: STEP_STARTED emitted per reasoning block ─────
 
-    def test_new_reasoning_block_after_tool_result(self, handler):
-        """When reasoning is open, then a tool call and its result arrive,
-        then new reasoning arrives, the new reasoning starts a fresh block
-        instead of appending to the old one.
-        """
+    def test_each_reasoning_block_emits_step_started(self, handler):
+        """STEP_STARTED with a unique step_id is emitted before each
+        reasoning block, so the frontend creates separate ThinkingPart
+        components."""
         # Phase 1: first reasoning block
-        chunk1 = AIMessageChunk(
-            content="",
-            additional_kwargs={"reasoning_content": "Let me search for that..."},
-        )
-        handler.observe(chunk1, {"langgraph_node": "agent"})
-        phase1 = handler.drain()
-
-        starts1 = [e for e in phase1 if isinstance(e, ReasoningMessageStartEvent)]
-        assert len(starts1) == 1, "First reasoning should open a block"
-
-        # Phase 2: tool call
-        chunk2 = AIMessageChunk(
-            content="",
-            tool_call_chunks=[
-                {"id": "call-1", "name": "rag_search", "args": '{"query":"test"}', "index": 0},
-            ],
-        )
-        handler.observe(chunk2, {"langgraph_node": "agent"})
-        handler.drain()  # tool call events, irrelevant for this test
-
-        # Phase 3: tool result arrives
-        result = ToolMessage(content="Found 3 documents", tool_call_id="call-1")
-        handler.observe(result, {"langgraph_node": "tools"})
-        phase3 = handler.drain()
-
-        # The tool result should close the reasoning block
-        end_events = [e for e in phase3 if isinstance(e, ReasoningMessageEndEvent)]
-        assert len(end_events) == 1, (
-            "Tool result should close the open reasoning block"
-        )
-
-        # Phase 4: second reasoning block
-        chunk4 = AIMessageChunk(
-            content="",
-            additional_kwargs={"reasoning_content": "Now I can answer..."},
-        )
-        handler.observe(chunk4, {"langgraph_node": "agent"})
-        phase4 = handler.drain()
-
-        # Second reasoning should open a NEW block (separate from the first)
-        starts2 = [e for e in phase4 if isinstance(e, ReasoningMessageStartEvent)]
-        assert len(starts2) == 1, "Second reasoning should open a new block"
-
-        contents2 = [e for e in phase4 if isinstance(e, ReasoningMessageContentEvent)]
-        assert len(contents2) == 1
-        assert contents2[0].delta == "Now I can answer..."
-
-    # ── Tracer bullet 2 ───────────────────────────────────────────────
-
-    def test_multiple_reasoning_blocks_have_separate_end_events(self, handler):
-        """Each reasoning block gets its own END before the next START."""
-        # Block 1: reasoning
         handler.observe(
             AIMessageChunk(content="", additional_kwargs={"reasoning_content": "Think 1"}),
             {"langgraph_node": "agent"},
         )
-        handler.drain()  # START + CONTENT
+        phase1 = handler.drain()
 
-        # Tool call + result (closes reasoning)
+        step_starts = [e for e in phase1 if isinstance(e, StepStartedEvent)]
+        assert len(step_starts) == 1
+        sid1 = getattr(step_starts[0], "stepId", "")
+        assert sid1, "STEP_STARTED must carry a stepId"
+
+        # Phase 2: tool call + result
         handler.observe(
             AIMessageChunk(
                 content="",
@@ -105,24 +60,78 @@ class TestInterleavedReasoning:
         )
         handler.drain()
         handler.observe(ToolMessage(content="ok", tool_call_id="c1"), {"langgraph_node": "tools"})
-        phase1_end = handler.drain()
+        handler.drain()  # end events
 
-        ends_after_result = [e for e in phase1_end if isinstance(e, ReasoningMessageEndEvent)]
-        assert len(ends_after_result) == 1
-
-        # Block 2: reasoning
+        # Phase 3: second reasoning block
         handler.observe(
             AIMessageChunk(content="", additional_kwargs={"reasoning_content": "Think 2"}),
             {"langgraph_node": "agent"},
         )
+        phase3 = handler.drain()
+
+        step_starts2 = [e for e in phase3 if isinstance(e, StepStartedEvent)]
+        assert len(step_starts2) == 1
+        sid2 = getattr(step_starts2[0], "stepId", "")
+        assert sid2, "Second STEP_STARTED must carry a stepId"
+        assert sid2 != sid1, "Each STEP_STARTED must have a unique stepId"
+
+    # ── Tracer bullet 2: content events carry step_id ─────────────────
+
+    def test_reasoning_content_carries_step_id(self, handler):
+        """REASONING_MESSAGE_CONTENT events carry a step_id distinct
+        from message_id, set by the STEP_STARTED emitted before them."""
+        handler.observe(
+            AIMessageChunk(content="", additional_kwargs={"reasoning_content": "Hello"}),
+            {"langgraph_node": "agent"},
+        )
+        events = handler.drain()
+
+        contents = [e for e in events if isinstance(e, ReasoningMessageContentEvent)]
+        assert len(contents) == 1
+        step_id = getattr(contents[0], "stepId", "")
+        assert step_id, "Content event must carry stepId"
+        assert step_id != "msg-1", "stepId must differ from messageId"
+
+    # ── Tracer bullet 3: stepId changes across blocks ─────────────────
+
+    def test_step_id_changes_across_reasoning_blocks(self, handler):
+        """stepId on content events changes when a new reasoning block
+        opens after a tool result, ensuring the frontend creates a
+        second ThinkingPart."""
+        # Block 1
+        handler.observe(
+            AIMessageChunk(content="", additional_kwargs={"reasoning_content": "A"}),
+            {"langgraph_node": "agent"},
+        )
+        phase1 = handler.drain()
+        step_id_1 = getattr(
+            [e for e in phase1 if isinstance(e, ReasoningMessageContentEvent)][0],
+            "stepId", "",
+        )
+
+        # Tool call + result
+        handler.observe(
+            AIMessageChunk(
+                content="",
+                tool_call_chunks=[{"id": "c1", "name": "t", "args": "{}", "index": 0}],
+            ),
+            {"langgraph_node": "agent"},
+        )
+        handler.drain()
+        handler.observe(ToolMessage(content="ok", tool_call_id="c1"), {"langgraph_node": "tools"})
+        handler.drain()
+
+        # Block 2
+        handler.observe(
+            AIMessageChunk(content="", additional_kwargs={"reasoning_content": "B"}),
+            {"langgraph_node": "agent"},
+        )
         phase2 = handler.drain()
+        step_id_2 = getattr(
+            [e for e in phase2 if isinstance(e, ReasoningMessageContentEvent)][0],
+            "stepId", "",
+        )
 
-        starts2 = [e for e in phase2 if isinstance(e, ReasoningMessageStartEvent)]
-        assert len(starts2) == 1
-
-        # Block 2 gets its own end via close reasoning later
-        handler.observe(AIMessageChunk(content="Final answer"), {"langgraph_node": "agent"})
-        final_events = handler.drain()
-
-        ends2 = [e for e in final_events if isinstance(e, ReasoningMessageEndEvent)]
-        assert len(ends2) == 1, "Second reasoning block should also get an END"
+        assert step_id_1 != "", "First stepId must be present"
+        assert step_id_2 != "", "Second stepId must be present"
+        assert step_id_2 != step_id_1, "stepId must change across reasoning blocks"

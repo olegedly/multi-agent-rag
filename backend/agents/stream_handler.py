@@ -18,6 +18,7 @@ from ag_ui.core.events import (
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
+    StepStartedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -69,6 +70,10 @@ class StreamEventHandler:
         # Accumulated reasoning content for delta computation
         # (DeepSeek sends full accumulated text in each chunk)
         self._last_reasoning_content: str = ""
+
+        # Step counter for unique STEP_STARTED stepIds per reasoning block
+        self._reasoning_step_counter: int = 0
+        self._current_reasoning_step_id: str | None = None
 
         # Draining — run_started is buffered on construction
         self._pending: list[BaseEvent] = [
@@ -170,6 +175,7 @@ class StreamEventHandler:
                     ReasoningMessageContentEvent(
                         message_id=self._message_id,
                         delta=delta,
+                        **{"stepId": self._current_reasoning_step_id or ""},  # type: ignore[arg-type]
                     ),
                 )
             return  # reasoning chunks usually carry no content or tool calls
@@ -245,9 +251,22 @@ class StreamEventHandler:
         )
 
     def _ensure_reasoning_open(self) -> None:
-        """Emit ``REASONING_MESSAGE_START`` if not yet open."""
+        """Emit ``STEP_STARTED`` + ``REASONING_MESSAGE_START`` if not yet open.
+
+        ``STEP_STARTED`` with a unique ``stepId`` is required because the
+        frontend's ``StreamProcessor`` ignores ``REASONING_MESSAGE_START``/``END``
+        — those are ``break;`` no-ops. Instead it keys thinking parts by
+        ``stepId``, which must be set via ``STEP_STARTED`` so consecutive
+        reasoning blocks produce separate ``ThinkingPart`` elements in the UI.
+        """
         if not self._reasoning_open:
             self._reasoning_open = True
+            step_id = f"rs-{self._message_id}-{self._reasoning_step_counter}"
+            self._reasoning_step_counter += 1
+            self._current_reasoning_step_id = step_id
+            self._pending.append(
+                StepStartedEvent(step_name="reasoning", **{"stepId": step_id}),  # type: ignore[call-arg]
+            )
             self._pending.append(
                 ReasoningMessageStartEvent(
                     message_id=self._message_id,
@@ -284,6 +303,7 @@ class StreamEventHandler:
         if self._reasoning_open:
             self._reasoning_open = False
             self._last_reasoning_content = ""
+            self._current_reasoning_step_id = None
             self._pending.append(
                 ReasoningMessageEndEvent(message_id=self._message_id),
             )
