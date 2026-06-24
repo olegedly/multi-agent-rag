@@ -319,37 +319,38 @@ class TestPipelineReasoningEvents:
 
         types = [type(e).__name__ for e in events]
         # Each of the 3 agents produces:
+        #   TextMessageStartEvent (before StepStartedEvent so the frontend
+        #     has a UIMessage to route all content to),
         #   StepStartedEvent, ReasoningMessageStartEvent,
         #   ReasoningMessageContentEvent×2, ReasoningMessageEndEvent,
-        #   TextMessageStartEvent, TextMessageContentEvent×1,
-        #   TextMessageEndEvent
+        #   TextMessageContentEvent×1, TextMessageEndEvent
         assert types == [
             "RunStartedEvent",
             # Researcher
+            "TextMessageStartEvent",
             "StepStartedEvent",
             "ReasoningMessageStartEvent",
             "ReasoningMessageContentEvent",
             "ReasoningMessageContentEvent",
             "ReasoningMessageEndEvent",
-            "TextMessageStartEvent",
             "TextMessageContentEvent",
             "TextMessageEndEvent",
             # Critic
+            "TextMessageStartEvent",
             "StepStartedEvent",
             "ReasoningMessageStartEvent",
             "ReasoningMessageContentEvent",
             "ReasoningMessageContentEvent",
             "ReasoningMessageEndEvent",
-            "TextMessageStartEvent",
             "TextMessageContentEvent",
             "TextMessageEndEvent",
             # Synthesizer
+            "TextMessageStartEvent",
             "StepStartedEvent",
             "ReasoningMessageStartEvent",
             "ReasoningMessageContentEvent",
             "ReasoningMessageContentEvent",
             "ReasoningMessageEndEvent",
-            "TextMessageStartEvent",
             "TextMessageContentEvent",
             "TextMessageEndEvent",
             "RunFinishedEvent",

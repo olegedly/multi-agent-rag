@@ -165,7 +165,9 @@ class StreamEventHandler:
         # Reasoning (if present)
         raw_reasoning = chunk.additional_kwargs.get("reasoning_content")
         if raw_reasoning and isinstance(raw_reasoning, str):
-            self._close_text()  # can't interleave, but text may be open
+            # ``_ensure_reasoning_open`` calls ``_ensure_text_open`` so the
+            # frontend has a ``UIMessage`` to route content to. Text stays
+            # open for the duration of this agent — no need to close it here.
             self._ensure_reasoning_open()
             # DeepSeek sends the full accumulated reasoning_content in each
             # chunk. Diff against the previous text and emit only the new portion.
@@ -255,7 +257,15 @@ class StreamEventHandler:
         )
 
     def _ensure_reasoning_open(self) -> None:
-        """Emit ``STEP_STARTED`` + ``REASONING_MESSAGE_START`` if not yet open.
+        """Emit ``TEXT_MESSAGE_START``, ``STEP_STARTED``, then
+        ``REASONING_MESSAGE_START`` if not yet open.
+
+        ``_ensure_text_open()`` is called first so the frontend's
+        ``StreamProcessor`` has an active ``UIMessage`` to route all
+        subsequent content (reasoning, text, tool calls) to.  Without this,
+        reasoning events arrive before ``TEXT_MESSAGE_START``, causing the
+        frontend to either create orphan auto-messages or leak reasoning into
+        the previous agent's message.
 
         ``STEP_STARTED`` with a unique ``stepId`` is required because the
         frontend's ``StreamProcessor`` ignores ``REASONING_MESSAGE_START``/``END``
@@ -265,6 +275,9 @@ class StreamEventHandler:
         """
         if not self._reasoning_open:
             self._reasoning_open = True
+            # Emit TEXT_MESSAGE_START first so the frontend routes all
+            # content for this agent to the same UIMessage.
+            self._ensure_text_open()
             step_id = f"rs-{self._message_id}-{self._reasoning_step_counter}"
             self._reasoning_step_counter += 1
             self._current_reasoning_step_id = step_id
