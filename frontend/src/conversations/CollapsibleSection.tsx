@@ -39,6 +39,16 @@ export function CollapsibleSection(props: CollapsibleSectionProps) {
   let userInteracted = false;
   let timerRef: number | undefined;
 
+  // Sync with the `expanded` prop when the user hasn't interacted.
+  // This handles the case where a ToolResultPartRenderer's
+  // CollapsibleSection is reused while isLoading goes false
+  // (the prop changes but createSignal only captures the initial value).
+  createEffect(() => {
+    if (!userInteracted) {
+      setExpanded(props.expanded ?? true);
+    }
+  });
+
   // Auto-collapse timer — resets whenever children content changes,
   // so streaming updates extend the visible window via the
   // resetTimerOn prop (passed from the parent on content update).

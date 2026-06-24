@@ -324,7 +324,7 @@ function ToolResultPartRenderer(props: {
       <CollapsibleSection
         label="Result"
         expanded={props.isLoading}
-        autoCollapseMs={props.isNew ? 1500 : undefined}
+        autoCollapseMs={1500}
         resetTimerOn={props.part.content}
         collapseOnTick={props.nextToolCallTick}
         leadingIcon={
