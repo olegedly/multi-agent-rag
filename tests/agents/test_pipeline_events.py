@@ -17,7 +17,6 @@ from ag_ui.core.events import (
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
-    StepStartedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -27,23 +26,25 @@ from ag_ui.core.events import (
     ToolCallStartEvent,
 )
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk
 
 from backend.corpus_config import CorporaConfig
 
 
 @pytest.fixture
 def corpora_config():
-    return CorporaConfig.from_dicts([
-        {
-            "id": "corpus-a-uuid",
-            "slug": "eu-ai-act",
-            "name": "EU AI Act",
-            "description": "Test corpus",
-            "chunker": "markdown-heading",
-            "documents": "corpora/eu-ai-act/**/*.md",
-        },
-    ])
+    return CorporaConfig.from_dicts(
+        [
+            {
+                "id": "corpus-a-uuid",
+                "slug": "eu-ai-act",
+                "name": "EU AI Act",
+                "description": "Test corpus",
+                "chunker": "markdown-heading",
+                "documents": "corpora/eu-ai-act/**/*.md",
+            },
+        ]
+    )
 
 
 @pytest.fixture
@@ -71,13 +72,13 @@ def mock_text_only():
             yield AIMessageChunk(content=chunk)
 
     async def _ainvoke_impl(messages):
-        idx = call_count[0]
         call_count[0] += 1
         return AIMessage(content="Hello, world!")
 
     def _apply(model: AsyncMock):
         model.astream = _astream_impl
         model.ainvoke = _ainvoke_impl
+        model.bind_tools = lambda _tools: model
 
     yield _apply
 
@@ -85,7 +86,9 @@ def mock_text_only():
 class TestPipelineTextEvents:
     """run_pipeline() yields AG-UI text events in correct order."""
 
-    async def test_emits_run_started_first(self, corpora_config, mock_text_only, mock_model):
+    async def test_emits_run_started_first(
+        self, corpora_config, mock_text_only, mock_model
+    ):
         """First event must be RunStartedEvent with thread/run IDs."""
         mock_text_only(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
@@ -96,7 +99,9 @@ class TestPipelineTextEvents:
         assert first.run_id == "run-default"
         assert first.timestamp is not None
 
-    async def test_emits_text_message_events(self, corpora_config, mock_text_only, mock_model):
+    async def test_emits_text_message_events(
+        self, corpora_config, mock_text_only, mock_model
+    ):
         """Three agents each produce TEXT_MESSAGE_START/CONTENT/END."""
         mock_text_only(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
@@ -104,7 +109,9 @@ class TestPipelineTextEvents:
         text_events = [
             e
             for e in events
-            if isinstance(e, (TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent))
+            if isinstance(
+                e, (TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent)
+            )
         ]
         # 3 agents × 3 events each (START, CONTENT×2, END) = ... actually CONTENT×2 = 4 per agent
         # Let's count: per agent = 1 START + 2 CONTENT + 1 END = 4
@@ -122,7 +129,9 @@ class TestPipelineTextEvents:
         assert contents[4].delta == "Hello, "
         assert contents[5].delta == "world!"
 
-    async def test_emits_run_finished_last(self, corpora_config, mock_text_only, mock_model):
+    async def test_emits_run_finished_last(
+        self, corpora_config, mock_text_only, mock_model
+    ):
         """Last event must be RunFinishedEvent."""
         mock_text_only(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
@@ -164,7 +173,10 @@ class TestPipelineTextEvents:
         ]
 
     async def test_text_events_include_agent_names(
-        self, corpora_config, mock_text_only, mock_model,
+        self,
+        corpora_config,
+        mock_text_only,
+        mock_model,
     ):
         """Each agent's TEXT_MESSAGE_START should carry the agent name."""
         mock_text_only(mock_model)
@@ -204,7 +216,12 @@ def mock_tool_calls():
             yield AIMessageChunk(
                 content="",
                 tool_call_chunks=[
-                    {"name": "rag_search", "args": '{"query":', "id": "call-1", "index": 0},
+                    {
+                        "name": "rag_search",
+                        "args": '{"query":',
+                        "id": "call-1",
+                        "index": 0,
+                    },
                 ],
             )
             yield AIMessageChunk(
@@ -225,8 +242,13 @@ def mock_tool_calls():
             # First call: tool calls
             return AIMessage(
                 content="",
-                tool_calls=[{"id": "call-1", "name": "rag_search",
-                             "args": {"query": "EU AI Act"}}],
+                tool_calls=[
+                    {
+                        "id": "call-1",
+                        "name": "rag_search",
+                        "args": {"query": "EU AI Act"},
+                    }
+                ],
             )
         else:
             # Second call: final answer
@@ -235,6 +257,7 @@ def mock_tool_calls():
     def _apply(model: AsyncMock):
         model.astream = _astream_impl
         model.ainvoke = _ainvoke_impl
+        model.bind_tools = lambda _tools: model
 
     yield _apply
 
@@ -242,7 +265,9 @@ def mock_tool_calls():
 class TestPipelineToolEvents:
     """run_pipeline() yields TOOL_CALL_* events alongside text."""
 
-    async def test_emits_tool_call_events(self, corpora_config, mock_tool_calls, mock_model):
+    async def test_emits_tool_call_events(
+        self, corpora_config, mock_tool_calls, mock_model
+    ):
         """Each of the 3 agents produces TOOL_CALL_START + 2×ARGS."""
         mock_tool_calls(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
@@ -256,7 +281,9 @@ class TestPipelineToolEvents:
         assert len(tool_args) == 6  # 3 agents × 2 args chunks each
         assert all(a.tool_call_id == "call-1" for a in tool_args)
 
-    async def test_emits_tool_result_events(self, corpora_config, mock_tool_calls, mock_model):
+    async def test_emits_tool_result_events(
+        self, corpora_config, mock_tool_calls, mock_model
+    ):
         """Each agent produces TOOL_CALL_END + TOOL_CALL_RESULT."""
         mock_tool_calls(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
@@ -271,7 +298,9 @@ class TestPipelineToolEvents:
         # uses the fake sessionmaker); just verify it's non-empty.
         assert all(len(r.content) > 0 for r in results)
 
-    async def test_full_tool_sequence(self, corpora_config, mock_tool_calls, mock_model):
+    async def test_full_tool_sequence(
+        self, corpora_config, mock_tool_calls, mock_model
+    ):
         """Verify complete event sequence for tool-using agent across 3 agents."""
         mock_tool_calls(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
@@ -345,6 +374,7 @@ def mock_reasoning():
     def _apply(model: AsyncMock):
         model.astream = _astream_impl
         model.ainvoke = _ainvoke_impl
+        model.bind_tools = lambda _tools: model
 
     yield _apply
 
@@ -352,7 +382,9 @@ def mock_reasoning():
 class TestPipelineReasoningEvents:
     """run_pipeline() yields REASONING_MESSAGE_* events."""
 
-    async def test_emits_reasoning_events(self, corpora_config, mock_reasoning, mock_model):
+    async def test_emits_reasoning_events(
+        self, corpora_config, mock_reasoning, mock_model
+    ):
         """Each of the 3 agents produces reasoning START/CONTENT×2/END."""
         mock_reasoning(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
@@ -368,7 +400,9 @@ class TestPipelineReasoningEvents:
         ends = [e for e in events if isinstance(e, ReasoningMessageEndEvent)]
         assert len(ends) == 3
 
-    async def test_full_reasoning_sequence(self, corpora_config, mock_reasoning, mock_model):
+    async def test_full_reasoning_sequence(
+        self, corpora_config, mock_reasoning, mock_model
+    ):
         """Verify complete event sequence for reasoning + answer."""
         mock_reasoning(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
@@ -440,6 +474,7 @@ def mock_crash():
     def _apply(model: AsyncMock):
         model.astream = _astream_impl
         model.ainvoke = _ainvoke_impl
+        model.bind_tools = lambda _tools: model
 
     yield _apply
 
@@ -447,7 +482,9 @@ def mock_crash():
 class TestPipelineErrors:
     """run_pipeline() handles errors gracefully."""
 
-    async def test_emits_run_error_on_crash(self, corpora_config, mock_crash, mock_model):
+    async def test_emits_run_error_on_crash(
+        self, corpora_config, mock_crash, mock_model
+    ):
         """When agent crashes, pipeline yields RUN_ERROR (not RUN_FINISHED)."""
         mock_crash(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
@@ -456,7 +493,9 @@ class TestPipelineErrors:
         assert len(errors) == 1
         assert "API failure" in errors[0].message
 
-    async def test_crash_does_not_emit_run_finished(self, corpora_config, mock_crash, mock_model):
+    async def test_crash_does_not_emit_run_finished(
+        self, corpora_config, mock_crash, mock_model
+    ):
         """When agent crashes, no RUN_FINISHED event."""
         mock_crash(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
@@ -464,7 +503,9 @@ class TestPipelineErrors:
         finished = [e for e in events if isinstance(e, RunFinishedEvent)]
         assert len(finished) == 0
 
-    async def test_text_block_closed_before_error(self, corpora_config, mock_crash, mock_model):
+    async def test_text_block_closed_before_error(
+        self, corpora_config, mock_crash, mock_model
+    ):
         """Open text block is closed before RUN_ERROR."""
         mock_crash(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
@@ -472,8 +513,12 @@ class TestPipelineErrors:
         ends = [e for e in events if isinstance(e, TextMessageEndEvent)]
         assert len(ends) == 1
 
-        error_idx = next(i for i, e in enumerate(events) if isinstance(e, RunErrorEvent))
-        end_idx = next(i for i, e in enumerate(events) if isinstance(e, TextMessageEndEvent))
+        error_idx = next(
+            i for i, e in enumerate(events) if isinstance(e, RunErrorEvent)
+        )
+        end_idx = next(
+            i for i, e in enumerate(events) if isinstance(e, TextMessageEndEvent)
+        )
         assert end_idx < error_idx
 
 

@@ -11,20 +11,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 from ag_ui.core.events import (
-    ReasoningMessageContentEvent,
-    ReasoningMessageEndEvent,
-    ReasoningMessageStartEvent,
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
     StepStartedEvent,
     TextMessageContentEvent,
-    TextMessageEndEvent,
     TextMessageStartEvent,
-    ToolCallArgsEvent,
-    ToolCallEndEvent,
-    ToolCallResultEvent,
-    ToolCallStartEvent,
 )
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, AIMessageChunk
@@ -34,23 +26,27 @@ from backend.corpus_config import CorporaConfig
 
 @pytest.fixture
 def corpora_config():
-    return CorporaConfig.from_dicts([
-        {
-            "id": "corpus-a-uuid",
-            "slug": "eu-ai-act",
-            "name": "EU AI Act",
-            "description": "Test corpus",
-            "chunker": "markdown-heading",
-            "documents": "corpora/eu-ai-act/**/*.md",
-        },
-    ])
+    return CorporaConfig.from_dicts(
+        [
+            {
+                "id": "corpus-a-uuid",
+                "slug": "eu-ai-act",
+                "name": "EU AI Act",
+                "description": "Test corpus",
+                "chunker": "markdown-heading",
+                "documents": "corpora/eu-ai-act/**/*.md",
+            },
+        ]
+    )
 
 
 def _make_async_gen(values):
     """Turn a list of values into an async generator."""
+
     async def _gen(*args, **kwargs):
         for v in values:
             yield v
+
     return _gen
 
 
@@ -86,6 +82,10 @@ def mock_basic_orchestration():
     def _apply(model: AsyncMock):
         model.astream = _astream_impl
         model.ainvoke = _ainvoke_impl
+        model.bind_tools = lambda _tools: model
+        # bind_tools must return the model itself so the explicit agent
+        # loop can call model.astream / model.ainvoke on the result.
+        model.bind_tools = lambda tools: model
 
     yield _apply
 
@@ -93,76 +93,102 @@ def mock_basic_orchestration():
 @pytest.fixture
 def mock_model():
     """A fake BaseChatModel that sidesteps real API credentials."""
-    return AsyncMock(spec=BaseChatModel)
+    m = AsyncMock(spec=BaseChatModel)
+    m.bind_tools = lambda tools: m
+    return m
 
 
 class TestBasicOrchestration:
     """run_orchestrator() yields correct events for three-agent flow."""
 
     async def test_emits_run_started_first(
-        self, corpora_config, mock_basic_orchestration, mock_model,
+        self,
+        corpora_config,
+        mock_basic_orchestration,
+        mock_model,
     ):
         """First event must be RunStartedEvent."""
         mock_basic_orchestration(mock_model)
         events = await _collect_orchestrator_events(
-            corpora_config, model=mock_model,
+            corpora_config,
+            model=mock_model,
         )
         assert len(events) >= 1
         assert isinstance(events[0], RunStartedEvent)
 
     async def test_emits_three_text_blocks(
-        self, corpora_config, mock_basic_orchestration, mock_model,
+        self,
+        corpora_config,
+        mock_basic_orchestration,
+        mock_model,
     ):
         """Three TEXT_MESSAGE_START events appear — one per agent."""
         mock_basic_orchestration(mock_model)
         events = await _collect_orchestrator_events(
-            corpora_config, model=mock_model,
+            corpora_config,
+            model=mock_model,
         )
         starts = [e for e in events if isinstance(e, TextMessageStartEvent)]
         assert len(starts) == 3
 
     async def test_agent_names_on_text_starts(
-        self, corpora_config, mock_basic_orchestration, mock_model,
+        self,
+        corpora_config,
+        mock_basic_orchestration,
+        mock_model,
     ):
         """Each TEXT_MESSAGE_START has the correct agent name."""
         mock_basic_orchestration(mock_model)
         events = await _collect_orchestrator_events(
-            corpora_config, model=mock_model,
+            corpora_config,
+            model=mock_model,
         )
         starts = [e for e in events if isinstance(e, TextMessageStartEvent)]
         names = [s.name for s in starts]
         assert names == ["Researcher", "Critic", "Synthesizer"]
 
     async def test_emits_run_finished_last(
-        self, corpora_config, mock_basic_orchestration, mock_model,
+        self,
+        corpora_config,
+        mock_basic_orchestration,
+        mock_model,
     ):
         """Last event must be a single RunFinishedEvent."""
         mock_basic_orchestration(mock_model)
         events = await _collect_orchestrator_events(
-            corpora_config, model=mock_model,
+            corpora_config,
+            model=mock_model,
         )
         finished = [e for e in events if isinstance(e, RunFinishedEvent)]
         assert len(finished) == 1
         assert events[-1] is finished[0]
 
     async def test_single_run_started(
-        self, corpora_config, mock_basic_orchestration, mock_model,
+        self,
+        corpora_config,
+        mock_basic_orchestration,
+        mock_model,
     ):
         """Only one RUN_STARTED event in the entire stream."""
         mock_basic_orchestration(mock_model)
         events = await _collect_orchestrator_events(
-            corpora_config, model=mock_model,
+            corpora_config,
+            model=mock_model,
         )
         starts = [e for e in events if isinstance(e, RunStartedEvent)]
         assert len(starts) == 1
 
     async def test_accrued_content_across_agents(
-        self, corpora_config, mock_basic_orchestration, mock_model,
+        self,
+        corpora_config,
+        mock_basic_orchestration,
+        mock_model,
     ):
         """All three agents' text content appears in the event stream."""
         mock_basic_orchestration(mock_model)
         events = await _collect_orchestrator_events(
-            corpora_config, model=mock_model,
+            corpora_config,
+            model=mock_model,
         )
         content_parts = [
             e.delta for e in events if isinstance(e, TextMessageContentEvent)
@@ -193,13 +219,13 @@ def mock_first_agent_crash():
         idx = call_count[0]
         if idx == 0:
             call_count[0] += 1
-            from langchain_core.messages import AIMessage
             return AIMessage(content="Before crash")
         return AIMessage(content="Should not reach")
 
     def _apply(model: AsyncMock):
         model.astream = _astream_impl
         model.ainvoke = _ainvoke_impl
+        model.bind_tools = lambda _tools: model
 
     yield _apply
 
@@ -208,23 +234,31 @@ class TestOrchestratorErrors:
     """run_orchestrator() handles agent errors gracefully."""
 
     async def test_emits_run_error_on_crash(
-        self, corpora_config, mock_first_agent_crash, mock_model,
+        self,
+        corpora_config,
+        mock_first_agent_crash,
+        mock_model,
     ):
         """When agent crashes, orchestrator yields RUN_ERROR."""
         mock_first_agent_crash(mock_model)
         events = await _collect_orchestrator_events(
-            corpora_config, model=mock_model,
+            corpora_config,
+            model=mock_model,
         )
         errors = [e for e in events if isinstance(e, RunErrorEvent)]
         assert len(errors) == 1
 
     async def test_no_run_finished_after_crash(
-        self, corpora_config, mock_first_agent_crash, mock_model,
+        self,
+        corpora_config,
+        mock_first_agent_crash,
+        mock_model,
     ):
         """When agent crashes, no RUN_FINISHED event."""
         mock_first_agent_crash(mock_model)
         events = await _collect_orchestrator_events(
-            corpora_config, model=mock_model,
+            corpora_config,
+            model=mock_model,
         )
         finished = [e for e in events if isinstance(e, RunFinishedEvent)]
         assert len(finished) == 0
@@ -254,8 +288,14 @@ def mock_interleaved_agent():
             # Second chunk in same call: tool call
             yield AIMessageChunk(
                 content="",
-                tool_call_chunks=[{"id": "call-1", "name": "rag_search",
-                                   "args": '{"query":"test"}', "index": 0}],
+                tool_call_chunks=[
+                    {
+                        "id": "call-1",
+                        "name": "rag_search",
+                        "args": '{"query":"test"}',
+                        "index": 0,
+                    }
+                ],
             )
         elif idx == 2:
             # Third model call: reasoning + tool call
@@ -265,8 +305,14 @@ def mock_interleaved_agent():
             )
             yield AIMessageChunk(
                 content="",
-                tool_call_chunks=[{"id": "call-2", "name": "rag_read_document",
-                                   "args": '{"chunk_ids":[1]}', "index": 0}],
+                tool_call_chunks=[
+                    {
+                        "id": "call-2",
+                        "name": "rag_read_document",
+                        "args": '{"chunk_ids":[1]}',
+                        "index": 0,
+                    }
+                ],
             )
         else:
             # Final model call: text output
@@ -278,14 +324,20 @@ def mock_interleaved_agent():
         if idx == 0:
             return AIMessage(
                 content="",
-                tool_calls=[{"id": "call-1", "name": "rag_search",
-                             "args": {"query": "test"}}],
+                tool_calls=[
+                    {"id": "call-1", "name": "rag_search", "args": {"query": "test"}}
+                ],
             )
         elif idx == 2:
             return AIMessage(
                 content="",
-                tool_calls=[{"id": "call-2", "name": "rag_read_document",
-                             "args": {"chunk_ids": [1]}}],
+                tool_calls=[
+                    {
+                        "id": "call-2",
+                        "name": "rag_read_document",
+                        "args": {"chunk_ids": [1]},
+                    }
+                ],
             )
         else:
             return AIMessage(content="Final answer")
@@ -293,6 +345,7 @@ def mock_interleaved_agent():
     def _apply(model: AsyncMock):
         model.astream = _astream_impl
         model.ainvoke = _ainvoke_impl
+        model.bind_tools = lambda _tools: model
 
     yield _apply
 
@@ -301,12 +354,16 @@ class TestInterleavedReasoningTools:
     """Agent nodes with multiple reasoning blocks between tool calls."""
 
     async def test_emits_two_thinking_blocks(
-        self, corpora_config, mock_interleaved_agent, mock_model,
+        self,
+        corpora_config,
+        mock_interleaved_agent,
+        mock_model,
     ):
         """Two STEP_STARTED events appear for two reasoning blocks."""
         mock_interleaved_agent(mock_model)
         events = await _collect_orchestrator_events(
-            corpora_config, model=mock_model,
+            corpora_config,
+            model=mock_model,
             slug="eu-ai-act",
         )
 
@@ -316,12 +373,16 @@ class TestInterleavedReasoningTools:
         )
 
     async def test_thinking_and_tool_interleave_ordering(
-        self, corpora_config, mock_interleaved_agent, mock_model,
+        self,
+        corpora_config,
+        mock_interleaved_agent,
+        mock_model,
     ):
         """Events appear in correct interleaved order."""
         mock_interleaved_agent(mock_model)
         events = await _collect_orchestrator_events(
-            corpora_config, model=mock_model,
+            corpora_config,
+            model=mock_model,
             slug="eu-ai-act",
         )
 
@@ -351,7 +412,9 @@ class TestInterleavedReasoningTools:
         step_idx = [i for i, t in enumerate(types) if t == "StepStartedEvent"]
         assert len(step_idx) == 2, "Need exactly two StepStartedEvent"
 
-        reasoning_end_idx = [i for i, t in enumerate(types) if t == "ReasoningMessageEndEvent"]
+        reasoning_end_idx = [
+            i for i, t in enumerate(types) if t == "ReasoningMessageEndEvent"
+        ]
         assert len(reasoning_end_idx) == 2, "Need exactly two ReasoningMessageEndEvent"
 
         # First reasoning block: StepStartedEvent before first ReasoningMessageEndEvent

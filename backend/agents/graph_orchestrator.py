@@ -270,14 +270,19 @@ async def _run_agent_node(
     messages: list[BaseMessage] = [SystemMessage(content=system_prompt)]
     messages.extend(state["messages"])
 
+    # Bind tools to the model so it knows what it can call (create_agent
+    # does this internally; our explicit loop must do it too).
+    from langchain_core.language_models.chat_models import BaseChatModel as _LCM
+
+    model: _LCM = model_instance.bind_tools(tools) if tools else model_instance  # type: ignore[attr-defined]
+
     MAX_ITERATIONS = 6
 
     try:
         for _iteration in range(MAX_ITERATIONS):
             # ── Stream model output ────────────────────────────────────
-            async for chunk in model_instance.astream(  # type: ignore[attr-defined]
+            async for chunk in model.astream(  # type: ignore[attr-defined]
                 messages,
-                stream_options={"include_usage": True},
             ):
                 if isinstance(chunk, BaseMessage):
                     handler.observe(chunk, {"langgraph_node": "agent"})
@@ -285,7 +290,7 @@ async def _run_agent_node(
                     events.append(event)
 
             # ── Get the complete response to inspect tool calls ────────
-            result = await model_instance.ainvoke(messages)  # type: ignore[attr-defined]
+            result = await model.ainvoke(messages)  # type: ignore[attr-defined]
             messages.append(result)
 
             tool_calls = getattr(result, "tool_calls", [])
