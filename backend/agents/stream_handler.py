@@ -53,11 +53,13 @@ class StreamEventHandler:
         thread_id: str,
         run_id: str,
         message_id: str | None = None,
+        agent_name: str | None = None,
+        suppress_run_started: bool = False,
     ) -> None:
         self._thread_id = thread_id
         self._run_id = run_id
         self._message_id = message_id or str(uuid4())
-
+        self._agent_name = agent_name
         # Open block tracking
         self._text_open = False
         self._reasoning_open = False
@@ -75,14 +77,16 @@ class StreamEventHandler:
         self._reasoning_step_counter: int = 0
         self._current_reasoning_step_id: str | None = None
 
-        # Draining — run_started is buffered on construction
-        self._pending: list[BaseEvent] = [
-            RunStartedEvent(
-                thread_id=thread_id,
-                run_id=run_id,
-                timestamp=_now_ms(),
-            ),
-        ]
+        # Draining — run_started is buffered on construction unless suppressed
+        self._pending: list[BaseEvent] = []
+        if not suppress_run_started:
+            self._pending = [
+                RunStartedEvent(
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    timestamp=_now_ms(),
+                ),
+            ]
 
     # ------------------------------------------------------------------
     # Public API
@@ -282,6 +286,7 @@ class StreamEventHandler:
                 TextMessageStartEvent(
                     message_id=self._message_id,
                     role="assistant",
+                    name=self._agent_name,
                     timestamp=_now_ms(),
                 ),
             )

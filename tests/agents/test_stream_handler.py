@@ -451,7 +451,82 @@ class TestFinalize:
         return h
 
 
-# ── Tracer bullet 6: error() ──────────────────────────────────────────────
+# ── Tracer bullet 7: agent_name ─────────────────────────────────────────────
+
+
+class TestAgentName:
+    """agent_name constructor param populates TextMessageStartEvent.name."""
+
+    def test_agent_name_on_text_start(self):
+        """TextMessageStartEvent.name is set from agent_name param."""
+        handler = StreamEventHandler(
+            thread_id="th-1", run_id="run-1", message_id="msg-1",
+            agent_name="Researcher",
+        )
+        handler.drain()  # RUN_STARTED
+        handler.observe(AIMessageChunk(content="Hello"), {"langgraph_node": "agent"})
+        events = handler.drain()
+
+        starts = [e for e in events if isinstance(e, TextMessageStartEvent)]
+        assert len(starts) == 1
+        assert starts[0].name == "Researcher"
+
+    def test_no_agent_name_defaults_to_none(self):
+        """When agent_name is not set, TextMessageStartEvent.name is None (backward compat)."""
+        handler = StreamEventHandler(
+            thread_id="th-1", run_id="run-1", message_id="msg-1",
+        )
+        handler.drain()
+        handler.observe(AIMessageChunk(content="Hello"), {"langgraph_node": "agent"})
+        events = handler.drain()
+
+        starts = [e for e in events if isinstance(e, TextMessageStartEvent)]
+        assert len(starts) == 1
+        assert starts[0].name is None
+
+
+# ── Tracer bullet 8: suppress_run_started ──────────────────────────────────
+
+
+class TestSuppressRunStarted:
+    """suppress_run_started flag skips RUN_STARTED on first drain."""
+
+    def test_suppress_run_started_omits_run_started(self):
+        """When suppress_run_started=True, first drain yields no RUN_STARTED."""
+        handler = StreamEventHandler(
+            thread_id="th-1", run_id="run-1", message_id="msg-1",
+            suppress_run_started=True,
+        )
+        events = handler.drain()
+        assert all(not isinstance(e, RunStartedEvent) for e in events)
+
+    def test_observer_and_finalize_still_work_with_suppress(self):
+        """When suppress_run_started=True, observe/finalize still work normally."""
+        handler = StreamEventHandler(
+            thread_id="th-1", run_id="run-1", message_id="msg-1",
+            suppress_run_started=True,
+        )
+        handler.drain()  # empty
+        handler.observe(AIMessageChunk(content="Hello"), {"langgraph_node": "agent"})
+        events = handler.drain()
+
+        starts = [e for e in events if isinstance(e, TextMessageStartEvent)]
+        assert len(starts) == 1
+        assert starts[0].name is None
+
+        finals = handler.finalize()
+        assert any(isinstance(e, RunFinishedEvent) for e in finals)
+
+    def test_suppress_false_by_default(self):
+        """suppress_run_started defaults to False for backward compat."""
+        handler = StreamEventHandler(
+            thread_id="th-1", run_id="run-1", message_id="msg-1",
+        )
+        events = handler.drain()
+        assert any(isinstance(e, RunStartedEvent) for e in events)
+
+
+# ── End of file ─────────────────────────────────────────────────────────────
 
 
 class TestError:
