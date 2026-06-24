@@ -1,4 +1,4 @@
-import { For, Index, Show } from "solid-js";
+import { For, Index, Show, useContext } from "solid-js";
 import { SolidMarkdown } from "solid-markdown";
 import remarkGfm from "remark-gfm";
 import type {
@@ -109,7 +109,7 @@ function PartRenderer(props: {
           part={props.part}
           isLoading={props.isLoading}
           nextToolCallTick={props.nextToolCallTick}
-          messageEnded={props.endedMessageIds?.has(props.msgId) ?? false}
+          msgId={props.msgId}
         />
       )}
       {props.part.type === "tool-result" && (
@@ -167,13 +167,14 @@ function TextPartRenderer(props: { part: TextPart }) {
     </div>
   );
 }
-
+import { MessageEndedContext } from "./ChatView";
 function ThinkingPartRenderer(props: {
   part: ThinkingPart;
   isLoading: boolean;
   nextToolCallTick: number;
-  messageEnded: boolean;
+  msgId: string;
 }) {
+  const endedSet = (useContext(MessageEndedContext) ?? (() => new Set<string>()))();
   // Start expanded during active streaming.
   // Stay open through tool-call interleaving — collapse only when the
   // entire stream stops (handled by StopCollapseContext in CollapsibleSection).
@@ -182,7 +183,7 @@ function ThinkingPartRenderer(props: {
     <div class="mt-4">
       <CollapsibleSection
         label="Reasoned"
-        expanded={props.isLoading && !props.messageEnded}
+        expanded={props.isLoading && !endedSet.has(props.msgId)}
         leadingIcon={
           <svg
             xmlns="http://www.w3.org/2000/svg"

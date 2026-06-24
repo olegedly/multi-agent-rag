@@ -13,6 +13,17 @@ import { createToolResultTracker } from "./toolResultTracker";
 const StopCollapseContext = createContext<() => number>(() => 0);
 export { StopCollapseContext };
 
+/**
+ * Reactive signal that holds the set of message IDs whose
+ * TEXT_MESSAGE_END has been received.  Consumed by ThinkingPartRenderer
+ * so thinking blocks collapse when their owning agent finishes —
+ * even across <Index>/<For> boundaries.
+ */
+const MessageEndedContext = createContext<() => Set<string>>(
+  () => new Set<string>(),
+);
+export { MessageEndedContext };
+
 interface ChatViewProps {
   messages: () => UIMessage[];
   isLoading: boolean;
@@ -30,6 +41,11 @@ interface ChatViewProps {
 
 export function ChatView(props: ChatViewProps) {
   const tracker = createToolResultTracker(props.messages, () => props.isLoading);
+  // Reactive signal for ended message IDs, synced from prop.
+  const [endedSet, setEndedSet] = createSignal<Set<string>>(new Set());
+  createEffect(() => {
+    setEndedSet(props.endedMessageIds ?? new Set<string>());
+  });
 
   // Tick when loading ends (stream complete or Stop button)
   let prevIsLoading: boolean | undefined;
@@ -44,6 +60,7 @@ export function ChatView(props: ChatViewProps) {
 
   return (
     <StopCollapseContext.Provider value={stopTick}>
+      <MessageEndedContext.Provider value={endedSet}>
       <div class="flex flex-col h-full bg-(--bg-primary)">
         <Show when={props.storageError}>
           <div class="flex items-center justify-between px-4 py-2 bg-red-900/80 text-red-100 text-sm">
@@ -76,6 +93,7 @@ export function ChatView(props: ChatViewProps) {
           focusTick={props.focusTick}
         />
       </div>
+      </MessageEndedContext.Provider>
     </StopCollapseContext.Provider>
   );
 }
