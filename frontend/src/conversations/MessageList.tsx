@@ -8,6 +8,7 @@ export interface MessageListProps {
   error: string | null;
   nextToolCallTick: number;
   isNewToolResult: (msgId: string, toolCallId: string) => boolean;
+  agentNameMap?: Record<string, string>;
 }
 
 export function MessageList(props: MessageListProps) {
@@ -78,6 +79,7 @@ export function MessageList(props: MessageListProps) {
                 isLoading={props.isLoading}
                 nextToolCallTick={props.nextToolCallTick}
                 isNewToolResult={props.isNewToolResult}
+                agentNameMap={props.agentNameMap}
               />
             </div>
           </div>

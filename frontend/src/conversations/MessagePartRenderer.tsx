@@ -14,6 +14,14 @@ import { CollapsibleSection } from "./CollapsibleSection";
 import { groupParts } from "./groupParts";
 import type { GroupItem, PairItem } from "./groupParts";
 
+// ── Agent name emoji map ──────────────────────────────────────────
+
+const AGENT_NAME_EMOJI: Record<string, string> = {
+  Researcher: "🔍",
+  Critic: "⚖️",
+  Synthesizer: "📝",
+};
+
 // ── Props ───────────────────────────────────────────────────────────────
 
 export interface MessagePartRendererProps {
@@ -22,17 +30,20 @@ export interface MessagePartRendererProps {
   nextToolCallTick: number;
   /** Optional set of (msgId, toolCallId) keys that appeared during loading */
   isNewToolResult?: (msgId: string, toolCallId: string) => boolean;
+  /** Map of messageId → agent name for assistant messages */
+  agentNameMap?: Record<string, string>;
 }
 
 // ── Main renderer ────────────────────────────────────────────────────────
 
 export function MessagePartRenderer(props: MessagePartRendererProps) {
-  const { msg, isLoading, nextToolCallTick, isNewToolResult } = props;
+  const { msg, isLoading, nextToolCallTick, isNewToolResult, agentNameMap } = props;
+  const agentName = msg.role === "assistant" ? agentNameMap?.[msg.id] : undefined;
 
   return (
     <>
       <div class="text-xs font-medium mb-1 opacity-70 capitalize">
-        {msg.role}
+        {agentName ? `${AGENT_NAME_EMOJI[agentName] ?? ""} ${agentName}` : msg.role}
       </div>
       {/* Use Index (position-based reconciliation) so that existing
           ToolResultPartRenderer instances survive when new parts

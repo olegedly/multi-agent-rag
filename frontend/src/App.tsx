@@ -97,6 +97,7 @@ const App = () => {
             isLoading={chat.isLoading()}
             error={chat.error()}
             storageError={chat.storageError()}
+            agentNameMap={chat.agentNameMap()}
             onSend={(text) => chat.sendMessage(text)}
             onStop={() => chat.stop()}
             onDismissStorageError={() => chat.dismissStorageError()}

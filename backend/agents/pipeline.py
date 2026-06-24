@@ -1,13 +1,12 @@
-"""LangChain agent pipeline: token-level streaming with AG-UI events.
+"""LangChain agent pipeline: delegates to multi-agent orchestrator.
 
-Switched from ``agent.ainvoke()`` (one-shot) to
-``agent.astream(stream_mode="messages")`` for smooth token-level
-streaming.  ``StreamEventHandler`` handles event classification.
+This module is now a thin wrapper around
+``graph_orchestrator.run_orchestrator()``, which runs the three-agent
+(Researcher → Critic → Synthesizer) pipeline.  The function signature
+and ``_convert_dict_messages`` are kept for backward compatibility.
 """
 
 from __future__ import annotations
-
-from uuid import uuid4
 
 from langchain_core.messages import (
     AIMessage,
@@ -19,9 +18,6 @@ from langchain_core.messages import (
 
 # The monkey-patch for reasoning_content is in ``backend/agents/__init__.py``
 # and runs automatically when this module is imported (agents is a parent pkg).
-
-from backend.agents.stream_handler import StreamEventHandler
-from backend.corpus_config import CorporaConfig
 
 
 def _convert_dict_messages(messages: list[dict]) -> list[BaseMessage]:
@@ -143,13 +139,16 @@ def _strip_orphaned_tool_calls(
 async def run_pipeline(
     messages: list[dict],
     corpus_slug: str,
-    corpora_config: CorporaConfig,
+    corpora_config,
     settings,
     thread_id: str = "th-default",
     run_id: str = "run-default",
     model=None,
 ):
-    """Run the agent pipeline.  Yields token-level AG-UI protocol events.
+    """Run the multi-agent pipeline.  Yields token-level AG-UI protocol events.
+
+    Delegates to ``graph_orchestrator.run_orchestrator()`` for the
+    three-agent (Researcher → Critic → Synthesizer) flow.
 
     Parameters
     ----------
@@ -166,9 +165,7 @@ async def run_pipeline(
     run_id : str
         Run identifier from the frontend.
     model : BaseChatModel, optional
-        Pre-configured model instance.  When provided, ``ChatOpenAI``
-        construction is skipped — useful for tests and for callers that
-        want to wire their own model instance.
+        Pre-configured model instance.
 
     Yields
     ------
@@ -178,87 +175,15 @@ async def run_pipeline(
         ToolCallStartEvent/ArgsEvent/EndEvent/ResultEvent,
         RunFinishedEvent, or RunErrorEvent.
     """
-    corpus = corpora_config.get(corpus_slug)
-    if corpus is None:
-        return
+    from backend.agents.graph_orchestrator import run_orchestrator
 
-    from langchain.agents import create_agent
-
-    from backend.agents.langchain_tools import create_rag_tools
-    from backend.middleware import JsonFileBudget, TokenBudgetCallback
-
-    tools = create_rag_tools(corpus_id=corpus.id)
-
-    # Wire daily token budget
-    budget_file = None
-    if not settings.demo_disable_budget:
-        budget_file = JsonFileBudget(
-            path=settings.demo_budget_file,
-            daily_limit=settings.demo_daily_budget_tokens,
-        )
-
-    if model is None:
-        from langchain_openai import ChatOpenAI
-
-        # fmt: off
-        model = ChatOpenAI(
-            model=settings.llm_model,
-            openai_api_key=settings.llm_api_key,  # type: ignore[call-arg]
-            openai_api_base=settings.llm_base_url,  # type: ignore[call-arg]
-            max_tokens=settings.llm_max_tokens,  # type: ignore[call-arg]
-            temperature=0,
-            callbacks=[TokenBudgetCallback(budget_file)],
-        )
-        # fmt: on
-
-    agent = create_agent(
-        model=model,
-        tools=tools,
-        system_prompt=(
-            "You are a research assistant that answers questions exclusively from "
-            "a curated knowledge base (the active corpus).\n\n"
-            "Rules:\n"
-            f"1. Use the `rag_search` tool to find relevant chunks in the corpus '{corpus.name}'.\n"
-            "2. Use `rag_read_document` to retrieve full document context around promising chunks.\n"
-            "3. Always cite your sources (corpus name + content excerpts + chunk IDs).\n"
-            "4. If a search returns no results, say so — do not invent facts.\n"
-            "5. Never answer from your own pre-training knowledge — base every claim on a retrieved chunk."
-            "6. Do no more than 4 tools calls per query. Stop when you have enough, and produce the response."
-        ),
-    )
-
-    lc_messages = _convert_dict_messages(messages)
-
-    message_id = str(uuid4())
-    handler = StreamEventHandler(
+    async for event in run_orchestrator(
+        messages=messages,
+        corpus_slug=corpus_slug,
+        corpora_config=corpora_config,
+        settings=settings,
         thread_id=thread_id,
         run_id=run_id,
-        message_id=message_id,
-    )
-
-    # Emit RUN_STARTED immediately
-    for event in handler.drain():
+        model=model,
+    ):
         yield event
-
-    try:
-        # ------------------------------------------------------------------
-        # Token-level streaming via astream(stream_mode="messages")
-        # ------------------------------------------------------------------
-        async for chunk, metadata in agent.astream(
-            {"messages": lc_messages},  # type: ignore[arg-type]
-            config={"recursion_limit": 25},
-            stream_mode="messages",
-        ):
-            if isinstance(chunk, BaseMessage):
-                handler.observe(chunk, metadata)  # type: ignore[arg-type]
-            for event in handler.drain():
-                yield event
-
-        # Stream exhausted — close any open blocks and emit RUN_FINISHED
-        for event in handler.finalize():
-            yield event
-
-    except Exception as exc:
-        # Close open blocks and emit RUN_ERROR
-        for event in handler.error(str(exc)):
-            yield event

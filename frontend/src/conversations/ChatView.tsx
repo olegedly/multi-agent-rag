@@ -18,6 +18,7 @@ interface ChatViewProps {
   isLoading: boolean;
   error: string | null;
   storageError: string | null;
+  agentNameMap?: Record<string, string>;
   onSend: (text: string) => void;
   onStop: () => void;
   onDismissStorageError: () => void;
@@ -62,6 +63,7 @@ export function ChatView(props: ChatViewProps) {
           error={props.error}
           nextToolCallTick={tracker.nextToolCallTick() + stopTick()}
           isNewToolResult={tracker.isNew}
+          agentNameMap={props.agentNameMap}
         />
 
         <ChatInput

@@ -453,4 +453,71 @@ describe("MessagePartRenderer", () => {
     expect(bodyText).toContain("score: 0.95");
     expect(bodyText).not.toContain('"score"');
   });
+
+  // ── Agent name badge ──────────────────────────────────────────────
+
+  it("renders agent name badge when agentNameMap has entry", () => {
+    const msg: UIMessage = {
+      id: "msg-1",
+      role: "assistant",
+      parts: [{ type: "text" as const, content: "Analysis" }],
+    };
+    const agentNameMap = { "msg-1": "Researcher" };
+    render(() => (
+      <MessagePartRenderer
+        msg={msg}
+        isLoading={false}
+        nextToolCallTick={0}
+        agentNameMap={agentNameMap}
+      />
+    ));
+
+    expect(screen.getByText("🔍 Researcher")).toBeTruthy();
+  });
+
+  it("does not render agent name badge when agentNameMap is empty", () => {
+    const msg: UIMessage = {
+      id: "msg-1",
+      role: "assistant",
+      parts: [{ type: "text" as const, content: "Analysis" }],
+    };
+    render(() => (
+      <MessagePartRenderer
+        msg={msg}
+        isLoading={false}
+        nextToolCallTick={0}
+        agentNameMap={{}}
+      />
+    ));
+
+    expect(screen.queryByText(/Researcher|Critic|Synthesizer/)).toBeNull();
+  });
+
+  it("renders emoji based on agent role", () => {
+    const msg: UIMessage = {
+      id: "msg-1",
+      role: "assistant",
+      parts: [{ type: "text" as const, content: "Test" }],
+    };
+    const expectations: Record<string, string> = {
+      Researcher: "🔍",
+      Critic: "⚖️",
+      Synthesizer: "📝",
+    };
+    const names = Object.keys(expectations);
+    for (let i = 0; i < names.length; i++) {
+      const name = names[i];
+      const emoji = expectations[name];
+      const { unmount } = render(() => (
+        <MessagePartRenderer
+          msg={msg}
+          isLoading={false}
+          nextToolCallTick={0}
+          agentNameMap={{ "msg-1": name }}
+        />
+      ));
+      expect(screen.getByText(`${emoji} ${name}`)).toBeTruthy();
+      unmount();
+    }
+  });
 });

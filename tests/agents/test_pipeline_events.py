@@ -2,7 +2,7 @@
 
 Exercises ``run_pipeline()`` with a mocked ``agent.astream()`` to verify
 the correct sequence and shape of AG-UI protocol events under the new
-streaming model (``stream_mode="messages"``).
+multi-agent orchestrator (Researcher → Critic → Synthesizer).
 """
 
 from __future__ import annotations
@@ -81,7 +81,7 @@ class TestPipelineTextEvents:
         assert first.timestamp is not None
 
     async def test_emits_text_message_events(self, corpora_config, mock_astream_text, mock_model):
-        """Content chunks yield TEXT_MESSAGE_START/CONTENT/CONTENT/END."""
+        """Three agents each produce TEXT_MESSAGE_START/CONTENT/END."""
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         text_events = [
@@ -89,13 +89,19 @@ class TestPipelineTextEvents:
             for e in events
             if isinstance(e, (TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent))
         ]
-        assert len(text_events) >= 3
+        # 3 agents × 4 events each (START, 2×CONTENT, END) = 12
+        assert len(text_events) == 12
 
-        # Two content events from the two chunks
+        # 3 agents × 2 content chunks = 6 content events
         contents = [e for e in text_events if isinstance(e, TextMessageContentEvent)]
-        assert len(contents) == 2
+        assert len(contents) == 6
+        # Each agent gets the same two chunks
         assert contents[0].delta == "Hello, "
         assert contents[1].delta == "world!"
+        assert contents[2].delta == "Hello, "
+        assert contents[3].delta == "world!"
+        assert contents[4].delta == "Hello, "
+        assert contents[5].delta == "world!"
 
     async def test_emits_run_finished_last(self, corpora_config, mock_astream_text, mock_model):
         """Last event must be RunFinishedEvent."""
@@ -107,18 +113,46 @@ class TestPipelineTextEvents:
         assert last.run_id == "run-default"
 
     async def test_full_text_sequence(self, corpora_config, mock_astream_text, mock_model):
-        """Verify complete event type sequence for text-only stream."""
+        """Verify complete event type sequence for text-only stream.
+
+        With the multi-agent orchestrator, three agent nodes (Researcher,
+        Critic, Synthesizer) each produce the same text events from the
+        mocked stream.
+        """
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         types = [type(e).__name__ for e in events]
         assert types == [
             "RunStartedEvent",
+            # Researcher
+            "TextMessageStartEvent",
+            "TextMessageContentEvent",
+            "TextMessageContentEvent",
+            "TextMessageEndEvent",
+            # Critic
+            "TextMessageStartEvent",
+            "TextMessageContentEvent",
+            "TextMessageContentEvent",
+            "TextMessageEndEvent",
+            # Synthesizer
             "TextMessageStartEvent",
             "TextMessageContentEvent",
             "TextMessageContentEvent",
             "TextMessageEndEvent",
             "RunFinishedEvent",
         ]
+
+    async def test_text_events_include_agent_names(
+        self, corpora_config, mock_astream_text, mock_model,
+    ):
+        """Each agent's TEXT_MESSAGE_START should carry the agent name."""
+        events = await collect_pipeline_events(corpora_config, model=mock_model)
+
+        starts = [e for e in events if isinstance(e, TextMessageStartEvent)]
+        assert len(starts) == 3
+        assert starts[0].name == "Researcher"
+        assert starts[1].name == "Critic"
+        assert starts[2].name == "Synthesizer"
 
     async def test_unknown_corpus_returns_no_events(self, corpora_config):
         """Unknown corpus slug yields zero events."""
@@ -167,38 +201,62 @@ class TestPipelineToolEvents:
     """run_pipeline() yields TOOL_CALL_* events alongside text."""
 
     async def test_emits_tool_call_events(self, corpora_config, mock_astream_tools, mock_model):
-        """Tool call chunks yield START/ARGS/ARGS events."""
+        """Each of the 3 agents produces TOOL_CALL_START + 2×ARGS."""
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         tool_starts = [e for e in events if isinstance(e, ToolCallStartEvent)]
-        assert len(tool_starts) == 1
-        assert tool_starts[0].tool_call_id == "call-1"
-        assert tool_starts[0].tool_call_name == "rag_search"
+        assert len(tool_starts) == 3
+        assert all(e.tool_call_id == "call-1" for e in tool_starts)
+        assert all(e.tool_call_name == "rag_search" for e in tool_starts)
 
         tool_args = [e for e in events if isinstance(e, ToolCallArgsEvent)]
-        assert len(tool_args) == 2
-        # Even the merged chunk (id=None on wire) must have resolved id
+        assert len(tool_args) == 6  # 3 agents × 2 args chunks each
         assert all(a.tool_call_id == "call-1" for a in tool_args)
 
     async def test_emits_tool_result_events(self, corpora_config, mock_astream_tools, mock_model):
-        """Tool result yields TOOL_CALL_END + TOOL_CALL_RESULT."""
+        """Each agent produces TOOL_CALL_END + TOOL_CALL_RESULT."""
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         ends = [e for e in events if isinstance(e, ToolCallEndEvent)]
-        assert len(ends) == 1
+        assert len(ends) == 3  # 3 agents
 
         results = [e for e in events if isinstance(e, ToolCallResultEvent)]
-        assert len(results) == 1
-        assert results[0].tool_call_id == "call-1"
-        assert "EU AI Act" in results[0].content
+        assert len(results) == 3
+        assert all(r.tool_call_id == "call-1" for r in results)
+        assert all("EU AI Act" in r.content for r in results)
 
     async def test_full_tool_sequence(self, corpora_config, mock_astream_tools, mock_model):
-        """Verify complete event sequence for tool-using agent."""
+        """Verify complete event sequence for tool-using agent across 3 agents."""
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         types = [type(e).__name__ for e in events]
+        # Each of the 3 agents produces:
+        #   ToolCallStartEvent, ToolCallArgsEvent×2, ToolCallEndEvent,
+        #   ToolCallResultEvent, TextMessageStartEvent,
+        #   TextMessageContentEvent×2, TextMessageEndEvent
         assert types == [
             "RunStartedEvent",
+            # Researcher
+            "ToolCallStartEvent",
+            "ToolCallArgsEvent",
+            "ToolCallArgsEvent",
+            "ToolCallEndEvent",
+            "ToolCallResultEvent",
+            "TextMessageStartEvent",
+            "TextMessageContentEvent",
+            "TextMessageContentEvent",
+            "TextMessageEndEvent",
+            # Critic
+            "ToolCallStartEvent",
+            "ToolCallArgsEvent",
+            "ToolCallArgsEvent",
+            "ToolCallEndEvent",
+            "ToolCallResultEvent",
+            "TextMessageStartEvent",
+            "TextMessageContentEvent",
+            "TextMessageContentEvent",
+            "TextMessageEndEvent",
+            # Synthesizer
             "ToolCallStartEvent",
             "ToolCallArgsEvent",
             "ToolCallArgsEvent",
@@ -241,27 +299,51 @@ class TestPipelineReasoningEvents:
     """run_pipeline() yields REASONING_MESSAGE_* events."""
 
     async def test_emits_reasoning_events(self, corpora_config, mock_astream_reasoning, mock_model):
-        """Reasoning chunks yield REASONING_MESSAGE_START/CONTENT/CONTENT/END."""
+        """Each of the 3 agents produces reasoning START/CONTENT×2/END."""
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         starts = [e for e in events if isinstance(e, ReasoningMessageStartEvent)]
-        assert len(starts) == 1
+        assert len(starts) == 3  # 3 agents each reason
 
         contents = [e for e in events if isinstance(e, ReasoningMessageContentEvent)]
-        assert len(contents) == 2
+        assert len(contents) == 6  # 3 agents × 2 chunks each
         assert contents[0].delta == "Let me think about "
         assert contents[1].delta == "the EU AI Act"
 
         ends = [e for e in events if isinstance(e, ReasoningMessageEndEvent)]
-        assert len(ends) == 1
+        assert len(ends) == 3
 
     async def test_full_reasoning_sequence(self, corpora_config, mock_astream_reasoning, mock_model):
         """Verify complete event sequence for reasoning + answer."""
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         types = [type(e).__name__ for e in events]
+        # Each of the 3 agents produces:
+        #   StepStartedEvent, ReasoningMessageStartEvent,
+        #   ReasoningMessageContentEvent×2, ReasoningMessageEndEvent,
+        #   TextMessageStartEvent, TextMessageContentEvent×1,
+        #   TextMessageEndEvent
         assert types == [
             "RunStartedEvent",
+            # Researcher
+            "StepStartedEvent",
+            "ReasoningMessageStartEvent",
+            "ReasoningMessageContentEvent",
+            "ReasoningMessageContentEvent",
+            "ReasoningMessageEndEvent",
+            "TextMessageStartEvent",
+            "TextMessageContentEvent",
+            "TextMessageEndEvent",
+            # Critic
+            "StepStartedEvent",
+            "ReasoningMessageStartEvent",
+            "ReasoningMessageContentEvent",
+            "ReasoningMessageContentEvent",
+            "ReasoningMessageEndEvent",
+            "TextMessageStartEvent",
+            "TextMessageContentEvent",
+            "TextMessageEndEvent",
+            # Synthesizer
             "StepStartedEvent",
             "ReasoningMessageStartEvent",
             "ReasoningMessageContentEvent",

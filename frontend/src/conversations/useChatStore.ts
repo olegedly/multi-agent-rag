@@ -1,6 +1,7 @@
 import { onCleanup, onMount, createSignal } from "solid-js";
 import { fetchServerSentEvents, useChat } from "@tanstack/ai-solid";
 import type { UIMessage } from "@tanstack/ai-client";
+import type { StreamChunk } from "@tanstack/ai";
 import { createConversationStore } from "./store";
 import { generateTitle } from "./title";
 import { resilientFetch } from "./resilientFetch";
@@ -10,10 +11,23 @@ const SAVE_KEY = "chat:hasUnsaved";
 export function useChatStore() {
   const store = createConversationStore();
 
+  // Map of messageId → agent name (captured from TEXT_MESSAGE_START events)
+  const [agentNameMap, setAgentNameMap] = createSignal<Record<string, string>>({});
+
   const chat = useChat({
     connection: fetchServerSentEvents("/api/chat/eu-ai-act", {
       fetchClient: resilientFetch,
     }),
+    onChunk: (chunk: StreamChunk) => {
+      if (
+        chunk.type === "TEXT_MESSAGE_START" &&
+        "name" in chunk &&
+        typeof (chunk as any).name === "string"
+      ) {
+        const name = (chunk as any).name as string;
+        setAgentNameMap((prev) => ({ ...prev, [chunk.messageId]: name }));
+      }
+    },
   });
 
   // Tick that increments when a new conversation is created, so
@@ -140,6 +154,7 @@ export function useChatStore() {
     error: () => chat.error()?.message ?? null,
     status: chat.status,
     connectionStatus: chat.connectionStatus,
+    agentNameMap,
     sendMessage,
     stop,
     clear: chat.clear,
