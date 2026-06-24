@@ -1,4 +1,4 @@
-import { For, Index, Show, useContext } from "solid-js";
+import { For, Index, Show, useContext, createEffect, createSignal } from "solid-js";
 import { SolidMarkdown } from "solid-markdown";
 import remarkGfm from "remark-gfm";
 import type {
@@ -185,6 +185,42 @@ function ThinkingPartRenderer(props: {
   // Stay open through tool-call interleaving — collapse only when the
   // entire stream stops (handled by StopCollapseContext in CollapsibleSection).
   // When loaded from storage (isLoading=false), start collapsed.
+
+  // ── Stick-to-bottom scrolling ──────────────────────────────────────
+  let scrollRef: HTMLDivElement | undefined;
+  const [isUserAtBottom, setIsUserAtBottom] = createSignal(true);
+
+  const handleScroll = () => {
+    const el = scrollRef;
+    if (!el) return;
+    if (el.scrollHeight <= el.clientHeight) return;
+    const threshold = 40;
+    setIsUserAtBottom(
+      el.scrollHeight - el.scrollTop - el.clientHeight < threshold,
+    );
+  };
+
+  // Re-engage stick-to-bottom when streaming starts.
+  createEffect(() => {
+    if (props.isLoading) {
+      setIsUserAtBottom(true);
+    }
+  });
+
+  // Auto-scroll when thinking content grows during streaming.
+  // Uses scrollTop directly instead of scrollIntoView so it always
+  // targets the thinking container specifically — scrollIntoView can
+  // bubble up to the chat scroll wrapper when content hasn't yet
+  // overflowed (no scrollbar means no scrolling box in CSS).
+  createEffect(() => {
+    void props.part.content;
+    if (isUserAtBottom()) {
+      requestAnimationFrame(() => {
+        if (scrollRef) scrollRef.scrollTop = scrollRef.scrollHeight;
+      });
+    }
+  });
+
   return (
     <div class="mt-4">
       <CollapsibleSection
@@ -209,7 +245,11 @@ function ThinkingPartRenderer(props: {
           </svg>
         }
       >
-        <div class="mt-1 p-2 rounded-lg bg-(--bg-primary) border border-(--border) text-xs text-(--text-secondary) italic whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          class="mt-1 p-2 rounded-lg bg-(--bg-primary) border border-(--border) text-xs text-(--text-secondary) italic whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto"
+        >
           {props.part.content.trim()}
         </div>
       </CollapsibleSection>
