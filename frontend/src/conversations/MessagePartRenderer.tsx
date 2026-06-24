@@ -319,14 +319,24 @@ function ToolResultPartRenderer(props: {
   isLoading: boolean;
   nextToolCallTick: number;
 }) {
+  // Tick that increments when this agent stops streaming.
+  // CollapsibleSection watches collapseOnTick and collapses when >0.
+  const [agentStopTick, setAgentStopTick] = createSignal(0);
+  let wasLoading = props.isLoading;
+
+  createEffect(() => {
+    if (wasLoading && !props.isLoading) {
+      setAgentStopTick((t) => t + 1);
+    }
+    wasLoading = props.isLoading;
+  });
+
   return (
     <div class="mt-2 pl-5">
       <CollapsibleSection
         label="Result"
-        expanded={props.isLoading}
-        autoCollapseMs={1500}
-        resetTimerOn={props.part.content}
-        collapseOnTick={props.nextToolCallTick}
+        expanded={props.isNew || props.isLoading}
+        collapseOnTick={agentStopTick()}
         leadingIcon={
           <svg
             xmlns="http://www.w3.org/2000/svg"

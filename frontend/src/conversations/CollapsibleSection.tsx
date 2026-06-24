@@ -38,9 +38,6 @@ export function CollapsibleSection(props: CollapsibleSectionProps) {
   const stopTick = useContext(StopCollapseContext);
   let userInteracted = false;
   let timerRef: number | undefined;
-  const id = Math.random().toString(36).slice(2,6);
-  const label = id + ":" + props.label.slice(0,3);
-
 
   // Auto-collapse timer — resets whenever children content changes,
   // so streaming updates extend the visible window via the
@@ -50,10 +47,8 @@ export function CollapsibleSection(props: CollapsibleSectionProps) {
       clearTimeout(timerRef);
       timerRef = undefined;
     }
-    console.log(label+":auto", props.autoCollapseMs, expanded());
     if (props.autoCollapseMs && expanded() && !userInteracted) {
       timerRef = window.setTimeout(() => {
-        console.log(label+":auto:fire");
         if (!userInteracted) {
           setExpanded(false);
           props.onToggle?.(false);
@@ -104,7 +99,6 @@ export function CollapsibleSection(props: CollapsibleSectionProps) {
   // this section has opted out (e.g. tool results use autoCollapseMs).
   createEffect(
     on(stopTick, (tick) => {
-      console.log(label+":stop", tick, props.disableStopCollapse, expanded());
       if (props.disableStopCollapse) return;
       if (tick > 0 && !userInteracted && expanded()) {
         if (timerRef !== undefined) {
