@@ -13,7 +13,6 @@ import time
 from typing import Annotated, Any
 from uuid import uuid4
 
-from langchain.agents import create_agent
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.tools import BaseTool
@@ -238,6 +237,8 @@ async def _run_agent_node(
     state.  The events list holds AG-UI protocol events for the orchestrator
     to yield.
     """
+    from langchain.agents import create_agent
+
     tools = agent_config.tools_factory(state["corpus_id"])
     system_prompt = agent_config.system_prompt_template.format(
         corpus_name=state["corpus_name"],
@@ -419,13 +420,11 @@ async def run_orchestrator(
                 yield event
             node_events_buffer.clear()
 
-            # Check for error signal in state update
             if isinstance(_state, dict):
                 for node_updates in _state.values():
                     if isinstance(node_updates, dict) and node_updates.get("_error"):
                         has_error = True
 
-        # Drain any remaining events
         for event in node_events_buffer:
             yield event
 
@@ -434,10 +433,8 @@ async def run_orchestrator(
         return
 
     if has_error:
-        yield _run_error_event("One or more agents failed")
-        return
+        return  # handler.error() already emitted RunErrorEvent in the buffer
 
-    # ── Emit RUN_FINISHED ────────────────────────────────────────────────
     yield _run_finished_event(thread_id, run_id)
 
 
