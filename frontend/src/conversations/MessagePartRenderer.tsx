@@ -323,7 +323,7 @@ function ToolResultPartRenderer(props: {
     <div class="mt-2 pl-5">
       <CollapsibleSection
         label="Result"
-        expanded={props.isNew || props.part.state === "streaming"}
+        expanded={true}  // FORCE: unconditionally expanded for diagnostics
         autoCollapseMs={props.isNew ? 1500 : undefined}
         resetTimerOn={props.part.content}
         collapseOnTick={props.nextToolCallTick}
