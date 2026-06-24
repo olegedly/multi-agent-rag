@@ -39,13 +39,15 @@ export function CollapsibleSection(props: CollapsibleSectionProps) {
   let userInteracted = false;
   let timerRef: number | undefined;
 
-  // Sync with the `expanded` prop when the user hasn't interacted.
-  // This handles the case where a ToolResultPartRenderer's
-  // CollapsibleSection is reused while isLoading goes false
-  // (the prop changes but createSignal only captures the initial value).
+  // Collapse when the `expanded` prop becomes false (e.g. isLoading ends)
+  // but NEVER re-expand — that would fight auto-collapse / collapseOnTick
+  // when a subsequent streaming event re-renders this component.
   createEffect(() => {
     if (!userInteracted) {
-      setExpanded(props.expanded ?? true);
+      const propVal = props.expanded ?? true;
+      if (!propVal && expanded()) {
+        setExpanded(false);
+      }
     }
   });
 
