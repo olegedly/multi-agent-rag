@@ -188,7 +188,7 @@ function ThinkingPartRenderer(props: {
           </svg>
         }
       >
-        <div class="mt-1 p-2 rounded-lg bg-(--bg-primary) border border-(--border) text-xs text-(--text-secondary) italic whitespace-pre-wrap leading-relaxed">
+        <div class="mt-1 p-2 rounded-lg bg-(--bg-primary) border border-(--border) text-xs text-(--text-secondary) italic whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
           {props.part.content}
         </div>
       </CollapsibleSection>

@@ -231,47 +231,100 @@ async def _run_agent_node(
     thread_id: str,
     run_id: str,
 ) -> tuple[dict[str, Any], list[Any]]:
-    """Run one agent node, returning (state_update, ag_ui_events).
+    """Run one agent node via an explicit tool-calling loop.
 
-    The state_update dict contains the fields to merge back into the graph
-    state.  The events list holds AG-UI protocol events for the orchestrator
-    to yield.
+    Instead of delegating to ``create_agent()`` (a LangGraph black box),
+    this function drives the model directly in a loop:
+
+      1. Stream model output through the handler (reasoning, tool calls, text)
+      2. If the model returns tool calls, execute each tool
+      3. Feed tool results back as ``ToolMessage`` objects via the handler
+         (which causes ``_observe_tool_result`` to close the current
+         reasoning block, enabling a fresh block on the next iteration)
+      4. Repeat until the model produces a final answer with no tool calls
+
+    This guarantees proper ``STEP_STARTED`` / ``REASONING_MESSAGE_END``
+    boundaries around each tool-call iteration, producing multiple
+    interleaved thinking blocks in the frontend.
     """
-    from langchain.agents import create_agent
+    import json
+
+    from langchain_core.messages import SystemMessage
 
     tools = agent_config.tools_factory(state["corpus_id"])
     system_prompt = agent_config.system_prompt_template.format(
         corpus_name=state["corpus_name"],
     )
 
-    agent = create_agent(
-        model=model_instance,
-        tools=tools,
-        system_prompt=system_prompt,
-    )
-
-    message_id = str(uuid4())
     handler = StreamEventHandler(
         thread_id=thread_id,
         run_id=run_id,
-        message_id=message_id,
+        message_id=str(uuid4()),
         agent_name=agent_config.name,
         suppress_run_started=True,
     )
     events: list[Any] = []
     error_text: str | None = None
 
-    try:
-        async for chunk, metadata in agent.astream(
-            {"messages": state["messages"]},  # type: ignore[arg-type]
-            config={"recursion_limit": 25},
-            stream_mode="messages",
-        ):
-            if isinstance(chunk, BaseMessage):
-                handler.observe(chunk, metadata)  # type: ignore[arg-type]
-            for event in handler.drain():
-                events.append(event)
+    # Build the full message list with system prompt
+    messages: list[BaseMessage] = [SystemMessage(content=system_prompt)]
+    messages.extend(state["messages"])
 
+    MAX_ITERATIONS = 6
+
+    try:
+        for _iteration in range(MAX_ITERATIONS):
+            # ── Stream model output ────────────────────────────────────
+            async for chunk in model_instance.astream(  # type: ignore[attr-defined]
+                messages,
+                stream_options={"include_usage": True},
+            ):
+                if isinstance(chunk, BaseMessage):
+                    handler.observe(chunk, {"langgraph_node": "agent"})
+                for event in handler.drain():
+                    events.append(event)
+
+            # ── Get the complete response to inspect tool calls ────────
+            result = await model_instance.ainvoke(messages)  # type: ignore[attr-defined]
+            messages.append(result)
+
+            tool_calls = getattr(result, "tool_calls", [])
+            if not tool_calls:
+                break  # Final answer — no more tools to call
+
+            # ── Execute each tool and feed results back ────────────────
+            for tc in tool_calls:
+                tool_name: str = tc.get("name", "")  # type: ignore[union-attr]
+                tool_args: dict = tc.get("args", {})  # type: ignore[union-attr]
+                tool_call_id: str = tc.get("id", "")  # type: ignore[union-attr]
+
+                matched_tool = next(
+                    (t for t in tools if t.name == tool_name), None
+                )
+                if matched_tool is not None:
+                    try:
+                        tool_result = await matched_tool.ainvoke(tool_args)
+                        if isinstance(tool_result, str):
+                            result_content = tool_result
+                        else:
+                            result_content = json.dumps(tool_result)
+                    except Exception as exc:
+                        result_content = json.dumps({"error": str(exc)})
+                else:
+                    result_content = json.dumps({"error": f"Unknown tool: {tool_name}"})
+
+                tool_msg = ToolMessage(
+                    content=result_content, tool_call_id=tool_call_id
+                )
+                messages.append(tool_msg)
+
+                # Emit tool result — this closes the current reasoning block
+                # so the next model iteration starts a fresh one.
+                handler.observe(tool_msg, {"langgraph_node": "tools"})
+                for event in handler.drain():
+                    events.append(event)
+
+        # ── Close any open blocks ─────────────────────────────────────
         for event in handler.finalize():
             if not _is_run_finished(event):
                 events.append(event)
@@ -281,29 +334,24 @@ async def _run_agent_node(
         for event in handler.error(error_text):
             events.append(event)
 
+    # ── Extract final output for state ────────────────────────────────
+    final_message = messages[-1] if messages else None
+    output_text: str = (
+        getattr(final_message, "content", str(final_message)) or ""
+        if final_message
+        else ""
+    )
+
     state_update: dict[str, Any] = {
-        "messages": [],
+        "messages": [final_message] if final_message else [],
         "_error": error_text,
     }
 
-    if error_text:
-        return state_update, events
-
-    # Reconstruct the agent's final output message via invoke
-    result = await agent.ainvoke(
-        {"messages": state["messages"]},  # type: ignore[arg-type]
-        config={"recursion_limit": 25},
-    )
-    final_messages = result["messages"] if isinstance(result, dict) else result.messages
-    final_message = final_messages[-1]
-    output_text: str = getattr(final_message, "content", str(final_message)) or ""
-
-    state_update["messages"] = [final_message]
-
-    if agent_config.name == "Researcher":
-        state_update["researcher_output"] = output_text
-    elif agent_config.name == "Critic":
-        state_update["critic_output"] = output_text
+    if not error_text:
+        if agent_config.name == "Researcher":
+            state_update["researcher_output"] = output_text
+        elif agent_config.name == "Critic":
+            state_update["critic_output"] = output_text
 
     return state_update, events
 

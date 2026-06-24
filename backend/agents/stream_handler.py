@@ -188,6 +188,11 @@ class StreamEventHandler:
 
         # Tool call chunks
         if chunk.tool_call_chunks:
+            # Emit TEXT_MESSAGE_START first so the frontend has a UIMessage
+            # to route tool calls to (same reasoning as the reasoning fix:
+            # without this, TOOL_CALL_START arrives before any active
+            # assistant message and creates an orphan auto-message).
+            self._ensure_text_open()
             for tcc in chunk.tool_call_chunks:
                 tid = tcc.get("id")
                 idx = tcc.get("index")
@@ -206,18 +211,12 @@ class StreamEventHandler:
                         delta=tcc["args"] or "",
                     ),
                 )
-            # If there's also text content alongside tool calls, emit it
-            # but make sure text block is open.
-            raw_content = chunk.content
-            if raw_content:
-                self._ensure_text_open()
-                delta = cast(str, raw_content) if isinstance(raw_content, str) else ""
-                self._pending.append(
-                    TextMessageContentEvent(
-                        message_id=self._message_id,
-                        delta=delta,
-                    ),
-                )
+            # Don't emit text content alongside tool calls — the ``content``
+            # field in such chunks typically contains the model's internal
+            # JSON representation of the tool call arguments, not actual
+            # assistant response text.  Actual text arrives in subsequent
+            # chunks (after tool results are fed back) that do NOT carry
+            # tool_call_chunks.
             return
 
         # Plain text content

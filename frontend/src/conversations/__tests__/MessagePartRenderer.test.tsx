@@ -493,6 +493,126 @@ describe("MessagePartRenderer", () => {
     expect(screen.queryByText(/Researcher|Critic|Synthesizer/)).toBeNull();
   });
 
+  it("renders interleaved thinking, tool calls, and text in correct order", () => {
+    const msg: UIMessage = {
+      id: "m1",
+      role: "assistant",
+      parts: [
+        { type: "thinking" as const, content: "First reasoning" },
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "rag_search",
+          arguments: '{"query":"first"}',
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: '{"results": ["first result"]}',
+          state: "complete" as const,
+        },
+        { type: "thinking" as const, content: "Second reasoning" },
+        {
+          type: "tool-call" as const,
+          id: "call-2",
+          name: "rag_read_document",
+          arguments: '{"chunk_ids":[1]}',
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-2",
+          content: '{"results": ["read result"]}',
+          state: "complete" as const,
+        },
+        { type: "text" as const, content: "Final answer" },
+      ],
+    };
+
+    render(() => (
+      <MessagePartRenderer
+        msg={msg}
+        isLoading={false}
+        nextToolCallTick={0}
+      />
+    ));
+
+    // All parts should appear in order
+    const allText = document.body.textContent ?? "";
+    const firstIdx = allText.indexOf("First reasoning");
+    const tool1Idx = allText.indexOf("rag_search");
+    const secondIdx = allText.indexOf("Second reasoning");
+    const tool2Idx = allText.indexOf("rag_read_document");
+    const finalIdx = allText.indexOf("Final answer");
+
+    expect(firstIdx).toBeGreaterThanOrEqual(0);
+    expect(tool1Idx).toBeGreaterThan(firstIdx);
+    expect(secondIdx).toBeGreaterThan(tool1Idx);
+    expect(tool2Idx).toBeGreaterThan(secondIdx);
+    expect(finalIdx).toBeGreaterThan(tool2Idx);
+  });
+
+  it("does not render tool call JSON as raw text outside tool call renderer", () => {
+    const msg: UIMessage = {
+      id: "m1",
+      role: "assistant",
+      parts: [
+        { type: "thinking" as const, content: "Searching for data..." },
+        {
+          type: "tool-call" as const,
+          id: "call-1",
+          name: "rag_search",
+          arguments: '{"query":"safe uses"}',
+          state: "complete" as const,
+        },
+        {
+          type: "tool-result" as const,
+          toolCallId: "call-1",
+          content: '{"results": ["found"]}',
+          state: "complete" as const,
+        },
+        { type: "text" as const, content: "Safe uses include..." },
+      ],
+    };
+
+    render(() => (
+      <MessagePartRenderer
+        msg={msg}
+        isLoading={false}
+        nextToolCallTick={0}
+      />
+    ));
+
+    // The tool name should appear (from the ToolCallRenderer badge)
+    expect(screen.getByText("rag_search")).toBeTruthy();
+
+    // The tool state badge should say "done"
+    expect(screen.getByText("done")).toBeTruthy();
+
+    // The tool call arguments appear as YAML inside the tool call renderer.
+    // Arguments {"query":"safe uses"} → YAML: "query: safe uses"
+    const bodyText = document.body.textContent ?? "";
+    expect(bodyText).toContain("query:");
+    expect(bodyText).toContain("safe uses");
+
+    // The result "found" should be visible (inside tool result collapsible)
+    expect(bodyText).toContain("found");
+
+    // The thinking content should be visible
+    expect(screen.getByText("Searching for data...")).toBeTruthy();
+
+    // The final text should be visible
+    expect(screen.getByText("Safe uses include...")).toBeTruthy();
+
+    // CRITICAL: The raw JSON blob "{"type":"rag_search"..." should NOT
+    // appear anywhere. The tool call arguments go through the tool call
+    // renderer, not as a separate TextPart.
+    // The type field from a hypothetical content-injected JSON would be
+    // '{"type":"rag_search"' — this must not appear verbatim.
+    expect(bodyText).not.toContain('"type":"rag_search"');
+  });
+
   it("renders emoji based on agent role", () => {
     const msg: UIMessage = {
       id: "msg-1",

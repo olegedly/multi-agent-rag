@@ -1,13 +1,13 @@
 """Tests for pipeline AG-UI event emission.
 
-Exercises ``run_pipeline()`` with a mocked ``agent.astream()`` to verify
+Exercises ``run_pipeline()`` with a mocked model to verify
 the correct sequence and shape of AG-UI protocol events under the new
 multi-agent orchestrator (Researcher → Critic → Synthesizer).
 """
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from ag_ui.core.events import (
@@ -17,6 +17,7 @@ from ag_ui.core.events import (
     RunErrorEvent,
     RunFinishedEvent,
     RunStartedEvent,
+    StepStartedEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -25,8 +26,8 @@ from ag_ui.core.events import (
     ToolCallResultEvent,
     ToolCallStartEvent,
 )
-from langchain_core.messages import AIMessageChunk, ToolMessage
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from backend.corpus_config import CorporaConfig
 
@@ -55,23 +56,38 @@ def mock_model():
 
 
 @pytest.fixture
-def mock_astream_text():
-    """Mock agent so astream yields text-only AIMessageChunks."""
-    async def _astream(*args, **kwargs):
-        yield AIMessageChunk(content="Hello, "), {"langgraph_node": "agent"}
-        yield AIMessageChunk(content="world!"), {"langgraph_node": "agent"}
+def mock_text_only():
+    """Set up model for text-only agent calls (no tool calls).
 
-    mock_agent = AsyncMock()
-    mock_agent.astream = _astream
-    with patch("langchain.agents.create_agent", return_value=mock_agent):
-        yield
+    3 agents, each producing 2 text chunks via astream + no-tool ainvoke.
+    """
+    call_count: list[int] = [0]
+    # Each agent needs: astream (2 chunks) + ainvoke (1 result) = 3 calls
+    # 3 agents × 2 calls each = 6 calls total (astream=3, ainvoke=3)
+    TEXT_CHUNKS = ["Hello, ", "world!"]
+
+    async def _astream_impl(messages, **kwargs):
+        for chunk in TEXT_CHUNKS:
+            yield AIMessageChunk(content=chunk)
+
+    async def _ainvoke_impl(messages):
+        idx = call_count[0]
+        call_count[0] += 1
+        return AIMessage(content="Hello, world!")
+
+    def _apply(model: AsyncMock):
+        model.astream = _astream_impl
+        model.ainvoke = _ainvoke_impl
+
+    yield _apply
 
 
 class TestPipelineTextEvents:
     """run_pipeline() yields AG-UI text events in correct order."""
 
-    async def test_emits_run_started_first(self, corpora_config, mock_astream_text, mock_model):
+    async def test_emits_run_started_first(self, corpora_config, mock_text_only, mock_model):
         """First event must be RunStartedEvent with thread/run IDs."""
+        mock_text_only(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
         assert len(events) >= 1
         first = events[0]
@@ -80,8 +96,9 @@ class TestPipelineTextEvents:
         assert first.run_id == "run-default"
         assert first.timestamp is not None
 
-    async def test_emits_text_message_events(self, corpora_config, mock_astream_text, mock_model):
+    async def test_emits_text_message_events(self, corpora_config, mock_text_only, mock_model):
         """Three agents each produce TEXT_MESSAGE_START/CONTENT/END."""
+        mock_text_only(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         text_events = [
@@ -89,7 +106,9 @@ class TestPipelineTextEvents:
             for e in events
             if isinstance(e, (TextMessageStartEvent, TextMessageContentEvent, TextMessageEndEvent))
         ]
-        # 3 agents × 4 events each (START, 2×CONTENT, END) = 12
+        # 3 agents × 3 events each (START, CONTENT×2, END) = ... actually CONTENT×2 = 4 per agent
+        # Let's count: per agent = 1 START + 2 CONTENT + 1 END = 4
+        # 3 agents × 4 = 12
         assert len(text_events) == 12
 
         # 3 agents × 2 content chunks = 6 content events
@@ -103,8 +122,9 @@ class TestPipelineTextEvents:
         assert contents[4].delta == "Hello, "
         assert contents[5].delta == "world!"
 
-    async def test_emits_run_finished_last(self, corpora_config, mock_astream_text, mock_model):
+    async def test_emits_run_finished_last(self, corpora_config, mock_text_only, mock_model):
         """Last event must be RunFinishedEvent."""
+        mock_text_only(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         last = events[-1]
@@ -112,13 +132,14 @@ class TestPipelineTextEvents:
         assert last.thread_id == "th-default"
         assert last.run_id == "run-default"
 
-    async def test_full_text_sequence(self, corpora_config, mock_astream_text, mock_model):
+    async def test_full_text_sequence(self, corpora_config, mock_text_only, mock_model):
         """Verify complete event type sequence for text-only stream.
 
         With the multi-agent orchestrator, three agent nodes (Researcher,
         Critic, Synthesizer) each produce the same text events from the
         mocked stream.
         """
+        mock_text_only(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         types = [type(e).__name__ for e in events]
@@ -143,9 +164,10 @@ class TestPipelineTextEvents:
         ]
 
     async def test_text_events_include_agent_names(
-        self, corpora_config, mock_astream_text, mock_model,
+        self, corpora_config, mock_text_only, mock_model,
     ):
         """Each agent's TEXT_MESSAGE_START should carry the agent name."""
+        mock_text_only(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         starts = [e for e in events if isinstance(e, TextMessageStartEvent)]
@@ -164,44 +186,65 @@ class TestPipelineTextEvents:
 
 
 @pytest.fixture
-def mock_astream_tools():
-    """Mock agent so astream yields tool calls then results then answer."""
-    async def _astream(*args, **kwargs):
-        # Agent decides to call rag_search
-        yield AIMessageChunk(
-            content="",
-            tool_call_chunks=[
-                {"name": "rag_search", "args": '{"query":', "id": "call-1", "index": 0},
-            ],
-        ), {"langgraph_node": "agent"}
-        # LangGraph merges tool_call_chunks by index — subsequent chunk
-        # has id=None / name=None but carries the args continuation
-        yield AIMessageChunk(
-            content="",
-            tool_call_chunks=[
-                {"name": None, "args": '"EU AI Act"}', "id": None, "index": 0},
-            ],
-        ), {"langgraph_node": "agent"}
-        # Tool returns result
-        yield ToolMessage(
-            content="Found 3 relevant documents about EU AI Act.",
-            tool_call_id="call-1",
-        ), {"langgraph_node": "tools"}
-        # Final answer
-        yield AIMessageChunk(content="Based on search results"), {"langgraph_node": "agent"}
-        yield AIMessageChunk(content=" EU AI Act affects..."), {"langgraph_node": "agent"}
+def mock_tool_calls():
+    """Set up model for tool-calling agent.
 
-    mock_agent = AsyncMock()
-    mock_agent.astream = _astream
-    with patch("langchain.agents.create_agent", return_value=mock_agent):
-        yield
+    Each agent: astream yields tool call chunks, ainvoke returns AIMessage
+    with tool_calls, then after tool result, astream yields answer, ainvoke
+    returns final AIMessage.
+
+    3 agents × (astream + ainvoke + astream + ainvoke) = 12 calls tracked.
+    """
+    call_count: list[int] = [0]
+
+    async def _astream_impl(messages, **kwargs):
+        idx = call_count[0]
+        # Even indices (0, 2, 4) = first model call with tool calls
+        if idx % 2 == 0:
+            yield AIMessageChunk(
+                content="",
+                tool_call_chunks=[
+                    {"name": "rag_search", "args": '{"query":', "id": "call-1", "index": 0},
+                ],
+            )
+            yield AIMessageChunk(
+                content="",
+                tool_call_chunks=[
+                    {"name": None, "args": '"EU AI Act"}', "id": None, "index": 0},
+                ],
+            )
+        else:
+            # Odd indices = second model call with answer
+            yield AIMessageChunk(content="Based on search results")
+            yield AIMessageChunk(content=" EU AI Act affects...")
+
+    async def _ainvoke_impl(messages):
+        idx = call_count[0]
+        call_count[0] += 1
+        if idx % 2 == 0:
+            # First call: tool calls
+            return AIMessage(
+                content="",
+                tool_calls=[{"id": "call-1", "name": "rag_search",
+                             "args": {"query": "EU AI Act"}}],
+            )
+        else:
+            # Second call: final answer
+            return AIMessage(content="Based on search results EU AI Act affects...")
+
+    def _apply(model: AsyncMock):
+        model.astream = _astream_impl
+        model.ainvoke = _ainvoke_impl
+
+    yield _apply
 
 
 class TestPipelineToolEvents:
     """run_pipeline() yields TOOL_CALL_* events alongside text."""
 
-    async def test_emits_tool_call_events(self, corpora_config, mock_astream_tools, mock_model):
+    async def test_emits_tool_call_events(self, corpora_config, mock_tool_calls, mock_model):
         """Each of the 3 agents produces TOOL_CALL_START + 2×ARGS."""
+        mock_tool_calls(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         tool_starts = [e for e in events if isinstance(e, ToolCallStartEvent)]
@@ -213,8 +256,9 @@ class TestPipelineToolEvents:
         assert len(tool_args) == 6  # 3 agents × 2 args chunks each
         assert all(a.tool_call_id == "call-1" for a in tool_args)
 
-    async def test_emits_tool_result_events(self, corpora_config, mock_astream_tools, mock_model):
+    async def test_emits_tool_result_events(self, corpora_config, mock_tool_calls, mock_model):
         """Each agent produces TOOL_CALL_END + TOOL_CALL_RESULT."""
+        mock_tool_calls(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         ends = [e for e in events if isinstance(e, ToolCallEndEvent)]
@@ -223,46 +267,51 @@ class TestPipelineToolEvents:
         results = [e for e in events if isinstance(e, ToolCallResultEvent)]
         assert len(results) == 3
         assert all(r.tool_call_id == "call-1" for r in results)
-        assert all("EU AI Act" in r.content for r in results)
+        # Tool result content comes from the real tool execution (which
+        # uses the fake sessionmaker); just verify it's non-empty.
+        assert all(len(r.content) > 0 for r in results)
 
-    async def test_full_tool_sequence(self, corpora_config, mock_astream_tools, mock_model):
+    async def test_full_tool_sequence(self, corpora_config, mock_tool_calls, mock_model):
         """Verify complete event sequence for tool-using agent across 3 agents."""
+        mock_tool_calls(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         types = [type(e).__name__ for e in events]
-        # Each of the 3 agents produces:
-        #   ToolCallStartEvent, ToolCallArgsEvent×2, ToolCallEndEvent,
-        #   ToolCallResultEvent, TextMessageStartEvent,
-        #   TextMessageContentEvent×2, TextMessageEndEvent
+        # TEXT_MESSAGE_START is emitted before tool calls so the frontend
+        # has a UIMessage to route everything to.
+        # Per agent:
+        #   TextMessageStart + ToolCallStart + ToolCallArgs×2 +
+        #   ToolCallEnd + ToolCallResult + TextMessageContent×2 +
+        #   TextMessageEnd
         assert types == [
             "RunStartedEvent",
             # Researcher
+            "TextMessageStartEvent",
             "ToolCallStartEvent",
             "ToolCallArgsEvent",
             "ToolCallArgsEvent",
             "ToolCallEndEvent",
             "ToolCallResultEvent",
-            "TextMessageStartEvent",
             "TextMessageContentEvent",
             "TextMessageContentEvent",
             "TextMessageEndEvent",
             # Critic
+            "TextMessageStartEvent",
             "ToolCallStartEvent",
             "ToolCallArgsEvent",
             "ToolCallArgsEvent",
             "ToolCallEndEvent",
             "ToolCallResultEvent",
-            "TextMessageStartEvent",
             "TextMessageContentEvent",
             "TextMessageContentEvent",
             "TextMessageEndEvent",
             # Synthesizer
+            "TextMessageStartEvent",
             "ToolCallStartEvent",
             "ToolCallArgsEvent",
             "ToolCallArgsEvent",
             "ToolCallEndEvent",
             "ToolCallResultEvent",
-            "TextMessageStartEvent",
             "TextMessageContentEvent",
             "TextMessageContentEvent",
             "TextMessageEndEvent",
@@ -274,32 +323,38 @@ class TestPipelineToolEvents:
 
 
 @pytest.fixture
-def mock_astream_reasoning():
-    """Mock agent so astream yields reasoning then text."""
-    async def _astream(*args, **kwargs):
-        # Reasoning phase
+def mock_reasoning():
+    """Set up model for reasoning + text agent calls."""
+    call_count: list[int] = [0]
+
+    async def _astream_impl(messages, **kwargs):
         yield AIMessageChunk(
             content="",
             additional_kwargs={"reasoning_content": "Let me think about "},
-        ), {"langgraph_node": "agent"}
+        )
         yield AIMessageChunk(
             content="",
             additional_kwargs={"reasoning_content": "the EU AI Act"},
-        ), {"langgraph_node": "agent"}
-        # Answer phase
-        yield AIMessageChunk(content="Here is my analysis"), {"langgraph_node": "agent"}
+        )
+        yield AIMessageChunk(content="Here is my analysis")
 
-    mock_agent = AsyncMock()
-    mock_agent.astream = _astream
-    with patch("langchain.agents.create_agent", return_value=mock_agent):
-        yield
+    async def _ainvoke_impl(messages):
+        call_count[0] += 1
+        return AIMessage(content="Here is my analysis")
+
+    def _apply(model: AsyncMock):
+        model.astream = _astream_impl
+        model.ainvoke = _ainvoke_impl
+
+    yield _apply
 
 
 class TestPipelineReasoningEvents:
     """run_pipeline() yields REASONING_MESSAGE_* events."""
 
-    async def test_emits_reasoning_events(self, corpora_config, mock_astream_reasoning, mock_model):
+    async def test_emits_reasoning_events(self, corpora_config, mock_reasoning, mock_model):
         """Each of the 3 agents produces reasoning START/CONTENT×2/END."""
+        mock_reasoning(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         starts = [e for e in events if isinstance(e, ReasoningMessageStartEvent)]
@@ -313,8 +368,9 @@ class TestPipelineReasoningEvents:
         ends = [e for e in events if isinstance(e, ReasoningMessageEndEvent)]
         assert len(ends) == 3
 
-    async def test_full_reasoning_sequence(self, corpora_config, mock_astream_reasoning, mock_model):
+    async def test_full_reasoning_sequence(self, corpora_config, mock_reasoning, mock_model):
         """Verify complete event sequence for reasoning + answer."""
+        mock_reasoning(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         types = [type(e).__name__ for e in events]
@@ -361,38 +417,56 @@ class TestPipelineReasoningEvents:
 
 
 @pytest.fixture
-def mock_astream_crash():
-    """Mock agent so astream raises an exception."""
-    async def _astream(*args, **kwargs):
-        yield AIMessageChunk(content="Before crash"), {"langgraph_node": "agent"}
-        raise RuntimeError("API failure")
+def mock_crash():
+    """Set up model so the first agent crashes mid-stream."""
+    call_count: list[int] = [0]
 
-    mock_agent = AsyncMock()
-    mock_agent.astream = _astream
-    with patch("langchain.agents.create_agent", return_value=mock_agent):
-        yield
+    async def _astream_impl(messages, **kwargs):
+        idx = call_count[0]
+        # First call: crash
+        if idx == 0:
+            yield AIMessageChunk(content="Before crash")
+            raise RuntimeError("API failure")
+        # Subsequent calls should not be reached
+        yield AIMessageChunk(content="Should not reach")
+
+    async def _ainvoke_impl(messages):
+        idx = call_count[0]
+        call_count[0] += 1
+        if idx == 0:
+            return AIMessage(content="Before crash")
+        return AIMessage(content="Should not reach")
+
+    def _apply(model: AsyncMock):
+        model.astream = _astream_impl
+        model.ainvoke = _ainvoke_impl
+
+    yield _apply
 
 
 class TestPipelineErrors:
     """run_pipeline() handles errors gracefully."""
 
-    async def test_emits_run_error_on_crash(self, corpora_config, mock_astream_crash, mock_model):
+    async def test_emits_run_error_on_crash(self, corpora_config, mock_crash, mock_model):
         """When agent crashes, pipeline yields RUN_ERROR (not RUN_FINISHED)."""
+        mock_crash(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         errors = [e for e in events if isinstance(e, RunErrorEvent)]
         assert len(errors) == 1
         assert "API failure" in errors[0].message
 
-    async def test_crash_does_not_emit_run_finished(self, corpora_config, mock_astream_crash, mock_model):
+    async def test_crash_does_not_emit_run_finished(self, corpora_config, mock_crash, mock_model):
         """When agent crashes, no RUN_FINISHED event."""
+        mock_crash(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         finished = [e for e in events if isinstance(e, RunFinishedEvent)]
         assert len(finished) == 0
 
-    async def test_text_block_closed_before_error(self, corpora_config, mock_astream_crash, mock_model):
+    async def test_text_block_closed_before_error(self, corpora_config, mock_crash, mock_model):
         """Open text block is closed before RUN_ERROR."""
+        mock_crash(mock_model)
         events = await collect_pipeline_events(corpora_config, model=mock_model)
 
         ends = [e for e in events if isinstance(e, TextMessageEndEvent)]

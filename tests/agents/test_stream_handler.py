@@ -128,7 +128,8 @@ class TestToolCalls:
         return h
 
     def test_new_tool_call_emits_start_and_args(self, handler):
-        """First tool call chunk for a new id emits START + ARGS."""
+        """First tool call chunk for a new id emits TEXT_MESSAGE_START,
+        then TOOL_CALL_START + ARGS."""
         chunk = AIMessageChunk(
             content="",
             tool_call_chunks=[
@@ -138,13 +139,17 @@ class TestToolCalls:
         handler.observe(chunk, {"langgraph_node": "agent"})
         events = handler.drain()
 
-        assert len(events) >= 2
-        start = events[0]
+        assert len(events) >= 3
+        # TEXT_MESSAGE_START is emitted first so the frontend has a
+        # UIMessage to route tool calls to.
+        assert isinstance(events[0], TextMessageStartEvent)
+
+        start = events[1]
         assert isinstance(start, ToolCallStartEvent)
         assert start.tool_call_id == "call-1"
         assert start.tool_call_name == "rag_search"
 
-        args = events[1]
+        args = events[2]
         assert isinstance(args, ToolCallArgsEvent)
         assert args.tool_call_id == "call-1"
         assert args.delta == '{"query":'
