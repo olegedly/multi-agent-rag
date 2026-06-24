@@ -281,7 +281,7 @@ describe("ChatView", () => {
     expect(dots.length).toBe(0);
   });
 
-  it("does NOT show typing indicator when last message is assistant", () => {
+  it("shows typing indicator when loading with assistant messages (cross-agent handoff)", () => {
     const messages = createSignal<UIMessage[]>([
       textMsg("user", "Hi"),
       textMsg("assistant", "Hello"),
@@ -299,8 +299,8 @@ describe("ChatView", () => {
       />
     ));
 
-    const dots = document.querySelectorAll(".ellipsis-indicator");
-    expect(dots.length).toBe(0);
+    const dots = document.querySelectorAll(".ellipsis-indicator .dot");
+    expect(dots.length).toBe(3);
   });
 
   // ── Tracer bullet: ThinkingPart rendering ────────────────────────────

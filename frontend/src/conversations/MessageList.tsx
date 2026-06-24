@@ -93,12 +93,12 @@ export function MessageList(props: MessageListProps) {
         </div>
       </Show>
 
-      {/* Typing indicator */}
+      {/* Typing indicator — shows during streaming regardless of
+          last message role (cross-agent handoffs keep it visible). */}
       <Show
         when={
           props.isLoading &&
-          props.messages().length > 0 &&
-          props.messages()[props.messages().length - 1].role === "user"
+          props.messages().length > 0
         }
       >
         <div class="flex justify-start">

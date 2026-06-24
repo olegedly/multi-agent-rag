@@ -60,7 +60,10 @@ Rules:
 1. Use `rag_search` to find relevant chunks in the corpus.
 2. Use `rag_read_document` to retrieve full document context around \
 promising chunks.
-3. Cite your sources (corpus name + content excerpts + chunk IDs).
+3. Cite sources using natural plain text — never construct URLs or \
+hyperlink markdown.  Mention the source document title naturally \
+(e.g., "under Article 79" or "(Article 79, §2)").  Do NOT use \
+`[text](url)` syntax; the search results do not contain web URLs.
 4. If a search returns no results, say so — do not invent facts.
 5. Never answer from your own pre-training knowledge — base every claim \
 on a retrieved chunk.
@@ -77,7 +80,7 @@ independent verification.  Identify gaps, contradictions, weak citations, \
 or missing context.
 
 Output a structured critique with:
-- Verified claims (with citations)
+- Verified claims (with plain-text citations — never construct URLs)
 - Concerns or gaps found
 - Suggested improvements for the final answer
 
@@ -92,7 +95,7 @@ You have no search tools — you read everything from the conversation context.
 
 Output structure:
 - Summary
-- Key findings with citations
+- Key findings with plain-text citations (never construct URLs)
 - Confidence assessment (high / medium / low)
 - Address any concerns raised by the Critic
 """

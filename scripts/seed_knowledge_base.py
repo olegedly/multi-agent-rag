@@ -150,7 +150,10 @@ async def seed_corpus(
     # ── Process (insert + update) ─────────────────────────────────────
     to_process = plan["insert"] + plan["update"]
     for key, _fname, content in to_process:
-        chunks = chunker.chunk(content, {"title": key, "source_url": ""})
+        # NOTE: source_url is intentionally omitted — the knowledge base contains
+        # local files that have no web-accessible URL.  The LLM must not be given
+        # an empty string to avoid URL hallucination in citations.
+        chunks = chunker.chunk(content, {"title": key})
         texts = [c.content for c in chunks]
         embeddings = await embedding_client.embed_texts(texts)
 

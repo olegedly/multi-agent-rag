@@ -165,14 +165,15 @@ function ThinkingPartRenderer(props: {
   isLoading: boolean;
   nextToolCallTick: number;
 }) {
-  // Start expanded only when created during active streaming.
+  // Start expanded during active streaming.
+  // Stay open through tool-call interleaving — collapse only when the
+  // entire stream stops (handled by StopCollapseContext in CollapsibleSection).
   // When loaded from storage (isLoading=false), start collapsed.
   return (
     <div class="mt-4">
       <CollapsibleSection
         label="Reasoned"
         expanded={props.isLoading}
-        collapseOnTick={props.nextToolCallTick}
         leadingIcon={
           <svg
             xmlns="http://www.w3.org/2000/svg"
