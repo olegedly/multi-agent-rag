@@ -39,17 +39,6 @@ export function CollapsibleSection(props: CollapsibleSectionProps) {
   let userInteracted = false;
   let timerRef: number | undefined;
 
-  // Collapse when the `expanded` prop becomes false (e.g. isLoading ends)
-  // but NEVER re-expand — that would fight auto-collapse / collapseOnTick
-  // when a subsequent streaming event re-renders this component.
-  createEffect(() => {
-    if (!userInteracted) {
-      const propVal = props.expanded ?? true;
-      if (!propVal && expanded()) {
-        setExpanded(false);
-      }
-    }
-  });
 
   // Auto-collapse timer — resets whenever children content changes,
   // so streaming updates extend the visible window via the
