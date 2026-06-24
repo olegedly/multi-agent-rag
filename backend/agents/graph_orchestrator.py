@@ -96,8 +96,6 @@ You have no search tools — you read everything from the conversation context.
 Output structure:
 - Summary
 - Key findings with plain-text citations (never construct URLs)
-- Confidence assessment (high / medium / low)
-- Address any concerns raised by the Critic
 """
 
 
