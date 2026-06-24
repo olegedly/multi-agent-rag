@@ -39,7 +39,8 @@ export interface MessagePartRendererProps {
 // ── Main renderer ────────────────────────────────────────────────────────
 
 export function MessagePartRenderer(props: MessagePartRendererProps) {
-  const { msg, isLoading, nextToolCallTick, isNewToolResult, agentNameMap, endedMessageIds } = props;
+  const { msg, isLoading, nextToolCallTick, isNewToolResult, agentNameMap } = props;
+  const endedMessageIds = (useContext(MessageEndedContext) ?? (() => new Set<string>()))();
   const agentName =
     msg.role === "assistant" ? agentNameMap?.[msg.id] : undefined;
 
@@ -183,7 +184,11 @@ function ThinkingPartRenderer(props: {
     <div class="mt-4">
       <CollapsibleSection
         label="Reasoned"
+        // Collapse when any agent finishes (endedSet grows per TEXT_MESSAGE_END).
+        // Uses collapseOnTick (tied to endedSet.size) so it works across
+        // <For>/<Index> boundaries, plus expanded as a safety net.
         expanded={props.isLoading && !endedSet.has(props.msgId)}
+        collapseOnTick={endedSet.size}
         leadingIcon={
           <svg
             xmlns="http://www.w3.org/2000/svg"

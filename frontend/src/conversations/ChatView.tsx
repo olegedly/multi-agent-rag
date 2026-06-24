@@ -41,11 +41,20 @@ interface ChatViewProps {
 
 export function ChatView(props: ChatViewProps) {
   const tracker = createToolResultTracker(props.messages, () => props.isLoading);
-  // Reactive signal for ended message IDs, synced from prop.
+  // Reactive signal for ended message IDs — synced from prop via effect.
   const [endedSet, setEndedSet] = createSignal<Set<string>>(new Set());
   createEffect(() => {
-    setEndedSet(props.endedMessageIds ?? new Set<string>());
+    const next = props.endedMessageIds ?? new Set<string>();
+    // Avoid no-op signal updates (which can cause unnecessary re-renders).
+    if (next.size !== endedSet().size || !isSubset(endedSet(), next)) {
+      setEndedSet(next);
+    }
   });
+
+  function isSubset(a: Set<string>, b: Set<string>): boolean {
+    for (const v of a) { if (!b.has(v)) return false; }
+    return true;
+  }
 
   // Tick when loading ends (stream complete or Stop button)
   let prevIsLoading: boolean | undefined;
