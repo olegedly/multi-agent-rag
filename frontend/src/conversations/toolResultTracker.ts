@@ -31,11 +31,13 @@ export function createToolResultTracker(
   const seenKeys = new Set<string>();
   const [nextToolCallTick, setNextToolCallTick] = createSignal(0);
   let prevUnpairedCount = 0;
-  // Start as true if already loading at mount, so synchronous
-  // isNew calls (before the effect fires) work correctly.
-  let hasLoadedSinceMount = loading();
+  // Lazy-init: checked on the FIRST isNew() call.  This avoids the
+  // race where `loading` flips in the same batch as a tool result
+  // appearing — we read the *current* loading state once at call time,
+  // then cache it for the session.  Storage-loaded results correctly
+  // get false; streaming results correctly get true.
+  let hasLoadedSinceMount: boolean | undefined;
   let wasLoading = loading();
-
   // Reset seen keys at the start of each loading session so that
   // previously-seen results from an older stream don't block new results.
   // Track `hasLoadedSinceMount` so storage-loaded results (no loading
@@ -84,6 +86,12 @@ export function createToolResultTracker(
    * loading session) correctly return false.
    */
   const isNew = (msgId: string, toolCallId: string): boolean => {
+    // Lazy-init: snapshot loading() on first call, cache for the session.
+    // This handles the race where isLoading flips in the same batch
+    // as the tool result appearing (the effect hasn't run yet).
+    if (hasLoadedSinceMount === undefined) {
+      hasLoadedSinceMount = loading();
+    }
     if (!hasLoadedSinceMount) return false;
     const key = `${msgId}:${toolCallId}`;
     if (seenKeys.has(key)) return false;

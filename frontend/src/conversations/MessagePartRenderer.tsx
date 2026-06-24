@@ -76,6 +76,7 @@ export function MessagePartRenderer(props: MessagePartRendererProps) {
                     : false
                 }
                 nextToolCallTick={nextToolCallTick}
+                isLoading={isLoading}
               />
             );
           }
@@ -121,6 +122,7 @@ function PartRenderer(props: {
           part={props.part}
           isNew={props.isNewToolResult}
           nextToolCallTick={props.nextToolCallTick}
+          isLoading={props.isLoading}
         />
       )}
     </>
@@ -140,6 +142,7 @@ function ToolCallPairRenderer(props: {
   toolCall: ToolCallPart;
   toolResult: ToolResultPart | null;
   msgId: string;
+  isLoading: boolean;
   isNewToolResult: boolean;
   nextToolCallTick: number;
 }) {
@@ -151,6 +154,7 @@ function ToolCallPairRenderer(props: {
           <ToolResultPartRenderer
             part={tr()}
             isNew={props.isNewToolResult}
+            isLoading={props.isLoading}
             nextToolCallTick={props.nextToolCallTick}
           />
         )}
@@ -312,6 +316,7 @@ function ToolCallRenderer(props: { part: ToolCallPart }) {
 function ToolResultPartRenderer(props: {
   part: ToolResultPart;
   isNew: boolean;
+  isLoading: boolean;
   nextToolCallTick: number;
 }) {
   return (
@@ -321,6 +326,7 @@ function ToolResultPartRenderer(props: {
         expanded={props.isNew}
         autoCollapseMs={props.isNew ? 1500 : undefined}
         resetTimerOn={props.part.content}
+        collapseOnTick={props.nextToolCallTick}
         leadingIcon={
           <svg
             xmlns="http://www.w3.org/2000/svg"

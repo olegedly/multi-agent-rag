@@ -1047,9 +1047,15 @@ describe("ChatView", () => {
     };
     setMsgs([step2]);
 
-    // Both should now be collapsed — a new unpaired call arrived
-    expectToolResultState("First result", false);
-    expectToolResultState("Second result", false);
+    // Wait for effects to flush (collapseOnTick runs in the effect
+    // phase after the tracker detects the unpaired call).
+    return new Promise<void>((resolve) => {
+      queueMicrotask(() => {
+        expectToolResultState("First result", false);
+        expectToolResultState("Second result", false);
+        resolve();
+      });
+    });
   });
 
   it("does not collapse result when first tool-call arrives alone then result arrives later", () => {
