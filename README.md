@@ -1,6 +1,6 @@
 # Multi-Agent RAG
 
-A config-driven multi-agent research system with pgvector RAG, MCP tool servers, and Google ADK orchestration. Answers are grounded in curated knowledge bases (corpora), each scoped to a single corpus with route-based isolation.
+A config-driven multi-agent research system with pgvector RAG, MCP tool servers, and a LangChain agent pipeline. Answers are grounded in curated knowledge bases (corpora), each scoped to a single corpus with route-based isolation.
 
 ## Quick Start
 
@@ -8,19 +8,21 @@ A config-driven multi-agent research system with pgvector RAG, MCP tool servers,
 ./dev.sh
 ```
 
-This starts PostgreSQL (Docker), the FastAPI backend (hot-reload on `localhost:8000`), and the SolidJS frontend (Vite HMR on `localhost:5173`). The frontend proxies `/api/*` to the backend.
+This starts PostgreSQL (Docker), the FastAPI backend (hot-reload on `localhost:8000`), and the SolidJS frontend (Vite HMR on `localhost:3000`). The frontend proxies `/api/*` to the backend.
 
 **Prerequisites:** Docker, `uv` (Python ≥3.13), Bun, pgweb (optional).
 
 ## Architecture
 
 ```
-Landing Page → /corpora/<slug> → SolidJS SPA → AG-UI/SSE → FastAPI → ADK Orchestrator
-                                                                  ├── Researcher Agent (corpus-scoped search)
-                                                                  ├── Critic Agent (corpus-scoped verification)
-                                                                  └── Synthesizer Agent (corpus-scoped answer)
-                                                         MCP Tools (search_corpus, read_document)
-                                                              └── pgvector RAG (corpus-filtered)
+SolidJS SPA → AG-UI/SSE → FastAPI → LangChain Agent Pipeline
+                                        ├── Researcher Agent (corpus-scoped search)
+                                        ├── Critic Agent (corpus-scoped verification)
+                                        └── Synthesizer Agent (corpus-scoped answer)
+                              LangChain RAG Tools (search_corpus, read_document)
+                                   └── pgvector RAG (corpus-filtered)
+                              MCP Server (standalone, for pi/Claude Desktop)
+                                   └── pgvector RAG (corpus-filtered)
 ```
 
 The system is **corpus-scoped**: each conversation binds to one corpus from start to finish. Every retrieval carries the active `corpus_id`. Adding a new knowledge base is an ingestion + config task.
@@ -29,13 +31,12 @@ The system is **corpus-scoped**: each conversation binds to one corpus from star
 
 | Module | Responsibility |
 |--------|---------------|
-| `backend/llm/` | Abstract `LLMClient` interface with OpenAI & Anthropic implementations, ADK adapter |
 | `backend/embeddings/` | Abstract `EmbeddingClient` protocol with config-driven factory |
 | `backend/rag/` | Chunker strategies + pgvector semantic search |
 | `backend/mcp_server/` | Standalone MCP server: `search_corpus`, `read_document` |
-| `backend/agents/` | ADK multi-agent orchestrator (Researcher → Critic → Synthesizer) |
+| `backend/agents/` | LangChain agent pipeline (multi-agent: Researcher → Critic → Synthesizer planned, single agent current) |
 | `backend/main.py` | FastAPI `create_app()` factory with DI for testing |
-| `frontend/src/` | SolidJS SPA w/ route-based corpus selection, conversation persistence |
+| `frontend/src/` | SolidJS SPA with conversation persistence |
 
 ## Configuration
 
@@ -69,17 +70,17 @@ Idempotent: SHA-256 diff against `document_sources` table (insert new, update ch
 ## Testing
 
 ```bash
-make test          # full suite
-cd frontend && bunx vitest run   # frontend-only (56 tests)
-uv run pytest                     # backend-only
+make test           # full suite (backend + frontend)
+make test_backend   # backend only
+make test_frontend  # frontend only
 ```
 
-218+ tests across both stacks. Pure unit tests — no Docker or DB dependency for business logic. The `LLMClient` abstract seam and `create_app()` DI make mocking straightforward.
+Pure unit tests — no Docker or DB dependency for business logic. The `create_app()` DI makes mocking straightforward.
 
 ## Deployment
 
 Two Docker images, pushed to GHCR on `main`:
-- `ghcr.io/<owner>/multi-agent-rag-be:latest` — FastAPI + ADK + MCP
+- `ghcr.io/<owner>/multi-agent-rag-be:latest` — FastAPI + LangChain + MCP
 - `ghcr.io/<owner>/multi-agent-rag-fe:latest` — Caddy serving the SPA
 
 CI/CD: GitHub Actions → build → push → Coolify webhook.
