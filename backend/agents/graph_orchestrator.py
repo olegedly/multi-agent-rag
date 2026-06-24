@@ -8,6 +8,7 @@ distinct ``TEXT_MESSAGE_START.name`` values for frontend agent labels.
 
 from __future__ import annotations
 
+import asyncio
 import operator
 import time
 from typing import Annotated, Any
@@ -231,7 +232,8 @@ async def _run_agent_node(
     model_instance: BaseChatModel,
     thread_id: str,
     run_id: str,
-) -> tuple[dict[str, Any], list[Any]]:
+    event_queue: asyncio.Queue,
+) -> dict[str, Any]:
     """Run one agent node via an explicit tool-calling loop.
 
     Instead of delegating to ``create_agent()`` (a LangGraph black box),
@@ -264,7 +266,6 @@ async def _run_agent_node(
         agent_name=agent_config.name,
         suppress_run_started=True,
     )
-    events: list[Any] = []
     error_text: str | None = None
 
     # Build the full message list with system prompt
@@ -296,7 +297,7 @@ async def _run_agent_node(
                         chunk if accumulated is None else accumulated + chunk  # type: ignore[operator]
                     )
                 for event in handler.drain():
-                    events.append(event)
+                    await event_queue.put(event)
 
             # The accumulated message carries the same tool call IDs that
             # were streamed to the frontend.
@@ -337,17 +338,17 @@ async def _run_agent_node(
                 # so the next model iteration starts a fresh one.
                 handler.observe(tool_msg, {"langgraph_node": "tools"})
                 for event in handler.drain():
-                    events.append(event)
+                    await event_queue.put(event)
 
         # ── Close any open blocks ─────────────────────────────────────
         for event in handler.finalize():
             if not _is_run_finished(event):
-                events.append(event)
+                await event_queue.put(event)
 
     except Exception as exc:
         error_text = str(exc)
         for event in handler.error(error_text):
-            events.append(event)
+            await event_queue.put(event)
 
     # ── Extract final output for state ────────────────────────────────
     final_message = messages[-1] if messages else None
@@ -368,7 +369,7 @@ async def _run_agent_node(
         elif agent_config.name == "Critic":
             state_update["critic_output"] = output_text
 
-    return state_update, events
+    return state_update
 
 
 def _is_run_finished(event: Any) -> bool:
@@ -417,8 +418,11 @@ async def run_orchestrator(
     model_instance = _build_model(settings, model)
     lc_messages = _convert_dict_messages(messages)
 
-    # ── Node event buffer (shared via closure) ────────────────────────────
-    node_events_buffer: list[Any] = []
+    # ── Event queue for real-time streaming ────────────────────────────────
+    # Events are pushed by agent nodes as soon as they're produced and
+    # drained concurrently in the main coroutine.  A ``None`` sentinel
+    # signals the drain loop to stop.
+    event_queue: asyncio.Queue = asyncio.Queue()
 
     # ── Build the StateGraph ──────────────────────────────────────────────
     builder = StateGraph(MultiAgentState)
@@ -426,28 +430,28 @@ async def run_orchestrator(
     async def _researcher_node(state: MultiAgentState) -> dict[str, Any]:
         if state.get("_error"):
             return {"messages": [], "_error": state["_error"]}
-        update, node_events = await _run_agent_node(
+        update = await _run_agent_node(
             AGENT_CONFIGS[0], state, model_instance, thread_id, run_id,
+            event_queue=event_queue,
         )
-        node_events_buffer.extend(node_events)
         return dict(update)
 
     async def _critic_node(state: MultiAgentState) -> dict[str, Any]:
         if state.get("_error"):
             return {"messages": [], "_error": state["_error"]}
-        update, node_events = await _run_agent_node(
+        update = await _run_agent_node(
             AGENT_CONFIGS[1], state, model_instance, thread_id, run_id,
+            event_queue=event_queue,
         )
-        node_events_buffer.extend(node_events)
         return dict(update)
 
     async def _synthesizer_node(state: MultiAgentState) -> dict[str, Any]:
         if state.get("_error"):
             return {"messages": [], "_error": state["_error"]}
-        update, node_events = await _run_agent_node(
+        update = await _run_agent_node(
             AGENT_CONFIGS[2], state, model_instance, thread_id, run_id,
+            event_queue=event_queue,
         )
-        node_events_buffer.extend(node_events)
         return dict(update)
 
     builder.add_node("researcher", _researcher_node)
@@ -464,39 +468,52 @@ async def run_orchestrator(
     # ── Emit RUN_STARTED ──────────────────────────────────────────────────
     yield _run_started_event(thread_id, run_id)
 
-    # ── Drive the graph, yielding per-node events ─────────────────────────
+    # ── Drive the graph (background) + drain events (foreground) ──────────
     has_error: bool = False
+    graph_exception: Exception | None = None
 
-    try:
-        async for _state in graph.astream(
-            {
-                "messages": lc_messages,
-                "corpus_id": corpus.id,
-                "corpus_name": corpus.name,
-                "researcher_output": None,
-                "critic_output": None,
-                "_error": None,
-            },
-            stream_mode="updates",
-        ):
-            for event in node_events_buffer:
-                yield event
-            node_events_buffer.clear()
+    async def _drive_graph() -> None:
+        nonlocal has_error, graph_exception
+        try:
+            async for _state in graph.astream(
+                {
+                    "messages": lc_messages,
+                    "corpus_id": corpus.id,
+                    "corpus_name": corpus.name,
+                    "researcher_output": None,
+                    "critic_output": None,
+                    "_error": None,
+                },
+                stream_mode="updates",
+            ):
+                if isinstance(_state, dict):
+                    for node_updates in _state.values():
+                        if isinstance(node_updates, dict) and node_updates.get("_error"):
+                            has_error = True
+        except Exception as exc:
+            graph_exception = exc
+        finally:
+            await event_queue.put(None)  # sentinel → drain loop stops
 
-            if isinstance(_state, dict):
-                for node_updates in _state.values():
-                    if isinstance(node_updates, dict) and node_updates.get("_error"):
-                        has_error = True
+    graph_task = asyncio.create_task(_drive_graph())
 
-        for event in node_events_buffer:
-            yield event
+    # Drain events from the queue as they arrive (real-time), stopping
+    # when the sentinel is received.
+    while True:
+        event = await event_queue.get()
+        event_queue.task_done()
+        if event is None:
+            break
+        yield event
 
-    except Exception as exc:
-        yield _run_error_event(str(exc))
+    await graph_task
+
+    if graph_exception:
+        yield _run_error_event(str(graph_exception))
         return
 
     if has_error:
-        return  # handler.error() already emitted RunErrorEvent in the buffer
+        return  # handler.error() already emitted RunErrorEvent on the queue
 
     yield _run_finished_event(thread_id, run_id)
 
