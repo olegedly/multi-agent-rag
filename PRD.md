@@ -64,9 +64,8 @@ Landing Page
   ├── /corpora/eu-ai-act  ─── Corpus-specific route (by slug)
   └── /corpora/uk-civil-procedure ─── Corpus-specific route (by slug)
         │
-SolidJS SPA ──SSE──▶ FastAPI ──▶ LangChain Pipeline
-  (@tanstack/ai-solid,    (create_app()    ├── Single agent (current)
-   fetchServerSentEvents)  factory)        └── Linear 3-agent pipeline (planned)
+SolidJS SPA ──SSE──▶ FastAPI ──▶ LangGraph Multi-Agent Pipeline
+  (@tanstack/ai-solid,    (create_app()    └── Researcher → Critic → Synthesizer
                               │
                               ├── MCP Server (standalone, for pi/Claude Desktop)
                               │         └── pgvector RAG (corpus-filtered)
@@ -154,11 +153,11 @@ Both tools accept and enforce a `corpus_id` parameter. Missing or unknown `corpu
 
 **9. LangChain Agent Pipeline (`backend/agents/`)**
 
-A linear multi-agent pipeline built with LangChain's `create_agent`. Each agent is a single `create_agent()` call with its own system prompt and tool set. The pipeline is orchestrated by a simple async generator (`run_pipeline`) that passes the full message history through each stage:
+A three-agent pipeline orchestrated via a LangGraph ``StateGraph(MultiAgentState)`` with an explicit tool-calling loop (``backend/agents/graph_orchestrator.py``). Each agent drives the model directly in a loop — streaming output, executing tool calls, feeding results back, and producing a final answer with proper reasoning-block boundaries.
 
-- **Corpus Researcher:** A LangChain agent with `rag_search` and `rag_read_document` tools. Scoped to the active corpus via a tool factory (`create_rag_tools(corpus_id=X)`) that bakes the corpus UUID into each tool's closure — the LLM never sees the UUID. The agent searches the knowledge base for facts, dates, definitions, and specifications relevant to the user's question, and returns its findings with exact citations.
-- **Corpus Critic (planned):** A LangChain agent with no tools (system prompt only). Reviews the Researcher's findings for gaps, contradictions, weak citations, or missing context. Produces a critique with specific requests for clarification.
-- **Corpus Synthesizer (planned):** A LangChain agent with no tools (system prompt only). Synthesizes the Researcher's findings and the Critic's review into a concise, cited answer grounded in the active corpus. Structure: summary, key findings with citations (chunk IDs and source metadata), confidence assessment.
+- **Corpus Researcher:** An agent with ``rag_search`` and ``rag_read_document`` tools. Scoped to the active corpus via a tool factory that bakes the corpus UUID into each tool's closure — the LLM never sees the UUID. The agent searches the knowledge base for facts, dates, definitions, and specifications relevant to the user's question, and returns its findings with exact citations (max 4 tool calls).
+- **Corpus Critic:** An agent with ``rag_search`` and ``rag_read_document`` tools. Reviews the Researcher's findings for gaps, contradictions, weak citations, or missing context using independent verification. Produces a structured critique with verified claims, concerns, and suggested improvements (max 4 tool calls).
+- **Corpus Synthesizer:** An agent with **no tools** — reads everything from the accumulating conversation context. Synthesizes the Researcher's findings and the Critic's review into a final answer: summary, key findings with plain-text citations, confidence assessment.
 
 **Tools** are defined via the `@tool` decorator from `langchain_core.tools`. `create_rag_tools(corpus_id, ...)` returns two LangChain `BaseTool` objects:
 - `rag_search(query, top_k)` — semantic vector search over the active corpus
@@ -168,19 +167,11 @@ Both tools accept only the parameters the LLM should control (`query`, `top_k`, 
 
 The RAG query functions themselves live in `backend/rag/search.py` — the single source of truth shared by both the LangChain tools and the standalone MCP server.
 
-**Current implementation status:** A single-agent pipeline is wired in `backend/main.py` and `backend/agents/pipeline.py`. The pipeline creates a `ChatOpenAI` model (config-driven from environment variables), wraps the RAG tools with the active corpus UUID, calls `create_agent(model, tools, system_prompt)`, and streams the agent's response back to the frontend over SSE. The single agent will be replaced by the linear 3-agent pipeline (Researcher → Critic → Synthesizer) once streaming shows individual agent interactions clearly in the UI.
-
 **SSE streaming format:** The pipeline emits AG-UI protocol events via the `ag-ui-protocol` Python SDK. Pydantic event models (`RunStartedEvent`, `TextMessageStartEvent`, `TextMessageContentEvent`, `TextMessageEndEvent`, `RunFinishedEvent`, `RunErrorEvent`) are converted to SSE by `EventEncoder.encode()`, which produces camelCase JSON in `data: {...}\n\n` format. The event sequence is:
 ```
 RUN_STARTED → TEXT_MESSAGE_START → TEXT_MESSAGE_CONTENT → TEXT_MESSAGE_END → RUN_FINISHED
 ```
 The `thread_id` and `run_id` are extracted from the TanStack AI request body (`body.threadId`, `body.runId`). Extra fields like `finishReason` and `usage` ride along on `RunFinishedEvent` via Pydantic's `extra="allow"` passthrough. The legacy `[DONE]` sentinel has been removed — `RUN_FINISHED` serves as the termination signal. The frontend's `@tanstack/ai-solid` `useChat` hook parses this format natively via `StreamProcessor.processChunk()`, which dispatches on AG-UI event types.
-
-**Foundation already in place for multi-agent:**
-- `backend/agents/langchain_tools.py` — `create_rag_tools(corpus_id, ...)` factory with lazy dependency injection
-- `backend/agents/pipeline.py` — pipeline runner (currently single-agent, extensible to 3-agent linear chain)
-- `backend/main.py` — route-based SSE endpoint with slug → corpus UUID resolution
-- `tests/agents/test_langchain_tools.py` — 11 tests (tool shape, corpus scoping, cross-corpus isolation)
 
 **10. SolidJS Frontend (`frontend/`)**
 
@@ -191,9 +182,7 @@ A Vite + SolidJS SPA with route-based corpus selection using `@solidjs/router`:
 - **No in-chat corpus dropdown.** The active corpus is set by the route and cannot be changed mid-conversation.
 - Chat input area (auto-growing textarea + submit and stop buttons)
 - Streaming message display via user/assistant text bubbles
-- Agent labels, tool call displays, and reasoning steps rendered in real-time as the multi-agent pipeline runs *(pending: integrated as part of the LangChain agent streaming pipeline)*
-- Cited answer blocks showing knowledge-base sources in the final response *(pending: depends on the agent pipeline returning citations in the output)*
-- Agent status indicators (thinking / searching / synthesizing / done), shown per agent as the pipeline progresses *(pending: requires agent metadata in the AG-UI event stream)*
+- Agent labels (🔍 Researcher, ⚖️ Critic, 📝 Synthesizer), tool call displays, and reasoning steps rendered in real-time as the multi-agent pipeline runs
 - Typing indicator (animated ellipsis) shown while the LLM is generating a response
 - Error banner for LLM errors and localStorage quota warnings
 - Conversation sidebar (left panel): lists all conversations for the current corpus by auto-generated title, newest first. Current conversation highlighted. Two-step delete confirmation (hover → trash icon → confirm/cancel). New conversation button at top. Mobile-responsive with an overlay backdrop.
@@ -288,8 +277,7 @@ Backend tests: chunker strategies (heading/paragraph/recursive/fixed-size), corp
 
 | Module | What it covers |
 |---|---|
-| `frontend/.../LandingPage.tsx` | Landing page renders corpus cards; slug resolution; unknown slug handling; route-based conversation filtering |
-| `backend/agents/orchestrator.py` | Multi-agent pipeline: Researcher → Critic → Synthesizer ordering; intermediate agent output streaming |
+| `frontend/.../LandingPage.tsx` | Landing page renders corpus cards; slug resolution; unknown slug handling; route-based conversation filtering (tracked in [#26](https://github.com/olegedly/multi-agent-rag/issues/26)) |
 
 ## Out of Scope
 

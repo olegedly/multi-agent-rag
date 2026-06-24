@@ -34,7 +34,7 @@ The system is **corpus-scoped**: each conversation binds to one corpus from star
 | `backend/embeddings/` | Abstract `EmbeddingClient` protocol with config-driven factory |
 | `backend/rag/` | Chunker strategies + pgvector semantic search |
 | `backend/mcp_server/` | Standalone MCP server: `search_corpus`, `read_document` |
-| `backend/agents/` | LangChain agent pipeline (multi-agent: Researcher → Critic → Synthesizer planned, single agent current) |
+| `backend/agents/` | LangGraph multi-agent pipeline: Researcher → Critic → Synthesizer |
 | `backend/main.py` | FastAPI `create_app()` factory with DI for testing |
 | `frontend/src/` | SolidJS SPA with conversation persistence |
 
