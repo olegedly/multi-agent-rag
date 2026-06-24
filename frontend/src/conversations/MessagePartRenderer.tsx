@@ -13,6 +13,7 @@ import { formatToolResult } from "./formatToolResult";
 import { CollapsibleSection } from "./CollapsibleSection";
 import { groupParts } from "./groupParts";
 import type { GroupItem, PairItem } from "./groupParts";
+import { markCollapsed, isCollapsedInSession } from "./toolResultTracker";
 
 // ── Agent name emoji map ──────────────────────────────────────────
 
@@ -323,30 +324,38 @@ function ToolResultPartRenderer(props: {
   msgId: string;
 }) {
   const getEndedSet = useContext(MessageEndedContext) ?? (() => new Set<string>());
-  // Tick that
-  // CollapsibleSection watches collapseOnTick and collapses when >0.
-  const [agentStopTick, setAgentStopTick] = createSignal(0);
-  let wasLoading = props.isLoading;
 
-  // Collapse when this agent's message ends OR when loading stops.
-  createEffect(() => {
-    if (wasLoading && !props.isLoading) {
-      setAgentStopTick((t) => t + 1);
-    }
-    wasLoading = props.isLoading;
+  // ── Collapse memory ───────────────────────────────────────────────────
+  // Persists across <For> re-creations so a previously-collapsed result
+  // stays collapsed even when streaming updates re-mount the component.
+  const sectionKey = `${props.msgId}:${props.part.toolCallId}`;
+  const wasCollapsed = isCollapsedInSession(props.msgId, props.part.toolCallId);
 
-    // Also collapse when TEXT_MESSAGE_END is received.
-    if (getEndedSet().has(props.msgId)) {
-      setAgentStopTick((t) => t + 1);
+  // ── Expand / Collapse triggers ───────────────────────────────────────
+  // 1. expands => new result appears OR we're still loading (never collapsed)
+  // 2. collapseOnTick => nextToolCallTick (unpaired call arrives) OR endedSet (message finishes)
+  // 3. autoCollapseMs=1500 => collapses 1.5s after last content chunk
+  // 4. disableStopCollapse => we ignore the broken stopTick context
+
+  const stuckExpanded = props.isNew || (props.isLoading && !wasCollapsed);
+  const collapseTick = props.nextToolCallTick + (getEndedSet().has(props.msgId) ? 1 : 0);
+
+  const handleToggle = (newExpanded: boolean) => {
+    if (!newExpanded) {
+      markCollapsed(props.msgId, props.part.toolCallId);
     }
-  });
+  };
 
   return (
     <div class="mt-2 pl-5">
       <CollapsibleSection
         label="Result"
-        expanded={props.isNew || props.isLoading}
-        collapseOnTick={agentStopTick()}
+        expanded={stuckExpanded}
+        autoCollapseMs={1500}
+        resetTimerOn={[props.part.content, props.isLoading]}
+        collapseOnTick={collapseTick}
+        disableStopCollapse={true}
+        onToggle={handleToggle}
         leadingIcon={
           <svg
             xmlns="http://www.w3.org/2000/svg"

@@ -1,6 +1,31 @@
 import { createEffect, createSignal } from "solid-js";
 import type { UIMessage } from "@tanstack/ai-client";
 
+// ── Collapse memory ─────────────────────────────────────────────────────
+// Module-level map that persists collapse state across <For> re-creations.
+// Cleared when a new loading session starts (same time as seenKeys).
+
+const collapseMemory = new Map<string, boolean>();
+
+/** Mark a section as collapsed so it won't re-expand on re-creation. */
+export function markCollapsed(msgId: string, toolCallId: string): void {
+  collapseMemory.set(`${msgId}:${toolCallId}`, true);
+}
+
+/**
+ * Check whether a section was collapsed during the current session.
+ * Returns true only if markCollapsed was called this session AND
+ * the memory hasn't been cleared by a new loading transition.
+ */
+export function isCollapsedInSession(msgId: string, toolCallId: string): boolean {
+  return collapseMemory.get(`${msgId}:${toolCallId}`) ?? false;
+}
+
+/** Clear collapse memory (called when a new loading session begins). */
+function clearCollapseMemory(): void {
+  collapseMemory.clear();
+}
+
 export interface ToolResultTracker {
   /** Whether a tool result with these ids is new (first seen during loading) */
   isNew: (msgId: string, toolCallId: string) => boolean;
@@ -26,6 +51,7 @@ export function createToolResultTracker(
     if (now && !wasLoading) {
       hasLoadedSinceMount = true;
       seenKeys.clear();
+      clearCollapseMemory();
       prevUnpairedCount = 0;
     }
     wasLoading = now;
