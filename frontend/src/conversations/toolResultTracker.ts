@@ -11,11 +11,18 @@ export interface ToolResultTracker {
 /**
  * Creates a reactive tracker for tool result "newness" and auto-collapse ticks.
  *
- * - When `loading` is true, the first call to `isNew` for each (msgId, toolCallId)
- *   returns true and permanently records it as "seen".
- * - When `loading` is false, `isNew` always returns false.
- * - `nextToolCallTick()` increments each time a tool-call without a matching result
- *   appears in `messages` while loading.
+ * - `isNew` returns true the first time each (msgId, toolCallId) is seen
+ *   during a loading session.  Unlike the old implementation it does NOT
+ *   gate on `loading()` at call time — that caused a race where tool
+ *   results appearing in the same reactive batch as `isLoading=false`
+ *   would skip the "new" flag and start collapsed.
+ *
+ * - A "loading session" begins when `loading` transitions from false to
+ *   true.  `seenKeys` is cleared at the start of each session so that
+ *   only keys encountered during the *current* streaming run are tracked.
+ *
+ * - `nextToolCallTick()` increments each time a tool-call without a
+ *   matching result appears in `messages` while loading.
  */
 export function createToolResultTracker(
   messages: () => UIMessage[],
@@ -24,27 +31,30 @@ export function createToolResultTracker(
   const seenKeys = new Set<string>();
   const [nextToolCallTick, setNextToolCallTick] = createSignal(0);
   let prevUnpairedCount = 0;
+  // Start as true if already loading at mount, so synchronous
+  // isNew calls (before the effect fires) work correctly.
+  let hasLoadedSinceMount = loading();
+  let wasLoading = loading();
 
-  const isNew = (msgId: string, toolCallId: string): boolean => {
-    if (!loading()) return false;
-    const key = `${msgId}:${toolCallId}`;
-    if (seenKeys.has(key)) return false;
-    seenKeys.add(key);
-    return true;
-  };
-
-  // Track unpaired tool-calls using a signal, not mutable state.
-  // Reset prevUnpairedCount when loading ends so a fresh stream
-  // starts from a clean baseline.
-  // load `loading()` inside the effect so it reruns when loading toggles
+  // Reset seen keys at the start of each loading session so that
+  // previously-seen results from an older stream don't block new results.
+  // Track `hasLoadedSinceMount` so storage-loaded results (no loading
+  // session ever) are correctly reported as "not new".
   createEffect(() => {
-    if (!loading()) {
+    const now = loading();
+    if (now && !wasLoading) {
+      hasLoadedSinceMount = true;
+      seenKeys.clear();
+      prevUnpairedCount = 0;
+    }
+    wasLoading = now;
+
+    if (!now) {
       prevUnpairedCount = 0;
       return;
     }
 
-    // We need to eagerly load messages() inside the effect so tracking
-    // participates in the reactive graph
+    // Eagerly read messages() so tracking participates in the reactive graph
     const msgs = messages();
 
     const unpairedCount = msgs.reduce((count, msg) => {
@@ -52,7 +62,6 @@ export function createToolResultTracker(
         count +
         msg.parts.filter((p) => {
           if (p.type !== "tool-call") return false;
-          // Check if this call has a result in the same message
           const hasResult = msg.parts.some(
             (rp) => rp.type === "tool-result" && rp.toolCallId === p.id,
           );
@@ -66,6 +75,21 @@ export function createToolResultTracker(
     }
     prevUnpairedCount = unpairedCount;
   });
+
+  /**
+   * Returns true if (msgId, toolCallId) has never been seen during the
+   * current loading session.  Does NOT check `loading()` at call time —
+   * that check is replaced by the `hasLoadedSinceMount` flag which
+   * persists through the entire batch.  Storage-loaded results (no
+   * loading session) correctly return false.
+   */
+  const isNew = (msgId: string, toolCallId: string): boolean => {
+    if (!hasLoadedSinceMount) return false;
+    const key = `${msgId}:${toolCallId}`;
+    if (seenKeys.has(key)) return false;
+    seenKeys.add(key);
+    return true;
+  };
 
   return { isNew, nextToolCallTick };
 }
