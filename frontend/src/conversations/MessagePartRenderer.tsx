@@ -319,9 +319,6 @@ function ToolResultPartRenderer(props: {
   isLoading: boolean;
   nextToolCallTick: number;
 }) {
-  createEffect(() => {
-    console.log("CG:TRPR", "isNew=", props.isNew, "state=", props.part.state, "ld=", props.isLoading);
-  });
   return (
     <div class="mt-2 pl-5">
       <CollapsibleSection

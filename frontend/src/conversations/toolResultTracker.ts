@@ -94,10 +94,17 @@ export function createToolResultTracker(
       const loadingNow = loading();
       if (loadingNow) hasLoadedSinceMount = true;
     }
-    if (!hasLoadedSinceMount) return false;
+    if (!hasLoadedSinceMount) {
+      console.log("isNew:f", msgId.slice(-6), toolCallId, "ld=", loading(), "hlsm=", hasLoadedSinceMount, "sk=", seenKeys.has(`${msgId}:${toolCallId}`));
+      return false;
+    }
     const key = `${msgId}:${toolCallId}`;
-    if (seenKeys.has(key)) return false;
+    if (seenKeys.has(key)) {
+      console.log("isNew:s", msgId.slice(-6), toolCallId, "ld=", loading(), "hlsm=", hasLoadedSinceMount, "sk=y");
+      return false;
+    }
     seenKeys.add(key);
+    console.log("isNew:T", msgId.slice(-6), toolCallId, "ld=", loading(), "hlsm=", hasLoadedSinceMount);
     return true;
   };
 
