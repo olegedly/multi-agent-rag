@@ -13,6 +13,9 @@ export function useChatStore() {
 
   // Map of messageId → agent name (captured from TEXT_MESSAGE_START events)
   const [agentNameMap, setAgentNameMap] = createSignal<Record<string, string>>({});
+  // Set of message IDs that have received TEXT_MESSAGE_END.
+  // Used to collapse thinking blocks when their agent finishes.
+  const [endedMessageIds, setEndedMessageIds] = createSignal<Set<string>>(new Set());
 
   const chat = useChat({
     connection: fetchServerSentEvents("/api/chat/eu-ai-act", {
@@ -26,6 +29,9 @@ export function useChatStore() {
       ) {
         const name = (chunk as any).name as string;
         setAgentNameMap((prev) => ({ ...prev, [chunk.messageId]: name }));
+      }
+      if (chunk.type === "TEXT_MESSAGE_END") {
+        setEndedMessageIds((prev) => new Set(prev).add(chunk.messageId));
       }
     },
   });
@@ -155,6 +161,7 @@ export function useChatStore() {
     status: chat.status,
     connectionStatus: chat.connectionStatus,
     agentNameMap,
+    endedMessageIds,
     sendMessage,
     stop,
     clear: chat.clear,

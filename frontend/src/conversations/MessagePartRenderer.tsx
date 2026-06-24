@@ -32,13 +32,14 @@ export interface MessagePartRendererProps {
   isNewToolResult?: (msgId: string, toolCallId: string) => boolean;
   /** Map of messageId → agent name for assistant messages */
   agentNameMap?: Record<string, string>;
+  /** Set of message IDs whose TEXT_MESSAGE_END has been received. */
+  endedMessageIds?: Set<string>;
 }
 
 // ── Main renderer ────────────────────────────────────────────────────────
 
 export function MessagePartRenderer(props: MessagePartRendererProps) {
-  const { msg, isLoading, nextToolCallTick, isNewToolResult, agentNameMap } =
-    props;
+  const { msg, isLoading, nextToolCallTick, isNewToolResult, agentNameMap, endedMessageIds } = props;
   const agentName =
     msg.role === "assistant" ? agentNameMap?.[msg.id] : undefined;
 
@@ -80,6 +81,7 @@ export function MessagePartRenderer(props: MessagePartRendererProps) {
               msgId={msg.id}
               isNewToolResult={false}
               isLoading={isLoading}
+              endedMessageIds={endedMessageIds}
               nextToolCallTick={nextToolCallTick}
             />
           );
@@ -97,6 +99,7 @@ function PartRenderer(props: {
   isNewToolResult: boolean;
   isLoading: boolean;
   nextToolCallTick: number;
+  endedMessageIds?: Set<string>;
 }) {
   return (
     <>
@@ -106,6 +109,7 @@ function PartRenderer(props: {
           part={props.part}
           isLoading={props.isLoading}
           nextToolCallTick={props.nextToolCallTick}
+          messageEnded={props.endedMessageIds?.has(props.msgId) ?? false}
         />
       )}
       {props.part.type === "tool-result" && (
@@ -168,6 +172,7 @@ function ThinkingPartRenderer(props: {
   part: ThinkingPart;
   isLoading: boolean;
   nextToolCallTick: number;
+  messageEnded: boolean;
 }) {
   // Start expanded during active streaming.
   // Stay open through tool-call interleaving — collapse only when the
@@ -177,7 +182,7 @@ function ThinkingPartRenderer(props: {
     <div class="mt-4">
       <CollapsibleSection
         label="Reasoned"
-        expanded={props.isLoading}
+        expanded={props.isLoading && !props.messageEnded}
         leadingIcon={
           <svg
             xmlns="http://www.w3.org/2000/svg"

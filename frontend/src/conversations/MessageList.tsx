@@ -9,6 +9,8 @@ export interface MessageListProps {
   nextToolCallTick: number;
   isNewToolResult: (msgId: string, toolCallId: string) => boolean;
   agentNameMap?: Record<string, string>;
+  /** Set of message IDs whose TEXT_MESSAGE_END has been received. */
+  endedMessageIds?: Set<string>;
 }
 
 export function MessageList(props: MessageListProps) {
@@ -80,6 +82,8 @@ export function MessageList(props: MessageListProps) {
                 nextToolCallTick={props.nextToolCallTick}
                 isNewToolResult={props.isNewToolResult}
                 agentNameMap={props.agentNameMap}
+
+                endedMessageIds={props.endedMessageIds}
               />
             </div>
           </div>

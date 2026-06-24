@@ -19,6 +19,8 @@ interface ChatViewProps {
   error: string | null;
   storageError: string | null;
   agentNameMap?: Record<string, string>;
+  /** Set of message IDs whose TEXT_MESSAGE_END has been received. */
+  endedMessageIds?: Set<string>;
   onSend: (text: string) => void;
   onStop: () => void;
   onDismissStorageError: () => void;
@@ -64,6 +66,7 @@ export function ChatView(props: ChatViewProps) {
           nextToolCallTick={tracker.nextToolCallTick() + stopTick()}
           isNewToolResult={tracker.isNew}
           agentNameMap={props.agentNameMap}
+          endedMessageIds={props.endedMessageIds}
         />
 
         <ChatInput
