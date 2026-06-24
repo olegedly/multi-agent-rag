@@ -58,9 +58,10 @@ def mock_basic_orchestration():
     """Set up mock_model.astream / ainvoke for three agent calls.
 
     Each agent's astream yields AIMessageChunks and ainvoke returns
-    an AIMessage.  A call counter cycles through the three agents.
+    an AIMessage.  An internal call counter cycles through the three
+    agents using message history length as signal.
     """
-    call_count: list[int] = [0]
+    astream_call_count: list[int] = [0]
     agents = [
         (["Researcher findings here"], "Researcher findings here"),
         (["Critic ", "feedback"], "Critic feedback"),
@@ -68,16 +69,16 @@ def mock_basic_orchestration():
     ]
 
     async def _astream_impl(messages, **kwargs):
-        idx = call_count[0]
-        chunks, _ = agents[idx]
+        idx = astream_call_count[0]
+        astream_call_count[0] += 1
+        chunks, _ = agents[idx % len(agents)]
         for part in chunks:
             yield AIMessageChunk(content=part)
 
     async def _ainvoke_impl(messages):
-        idx = call_count[0]
-        _, text = agents[idx]
-        call_count[0] += 1
-        return AIMessage(content=text)
+        # ainvoke is no longer called by the orchestrator but kept for
+        # backward compatibility in tests that rely on it directly.
+        return AIMessage(content="")
 
     def _apply(model: AsyncMock):
         model.astream = _astream_impl
@@ -269,78 +270,41 @@ class TestOrchestratorErrors:
 
 @pytest.fixture
 def mock_interleaved_agent():
-    """Mock model for a single agent with reasoning → tool → reasoning → tool → text.
+    """Mock model for interleaved reasoning + tool calls across 3 agents.
 
-    Simulates two tool-calling iterations within one agent node.
+    Agent 1 and Agent 2 each do tool-call then text (2 iterations).
+    Agent 3 does only text (1 iteration).
+    Uses astream call counter (self-contained, no ainvoke dependency).
     """
-    call_count: list[int] = [0]
+    astream_count: list[int] = [0]
 
-    # The model is called 3 times per agent (2 tool loops + 1 final)
-    # Each call streams AIMessageChunks.
     async def _astream_impl(messages, **kwargs):
-        idx = call_count[0]
-        if idx == 0:
-            # First model call: reasoning + tool call
+        idx = astream_count[0]
+        astream_count[0] += 1
+        # Even indices below 4 = first call for Agent 1 (idx=0) / Agent 2 (idx=2)
+        if idx % 2 == 0 and idx < 4:
+            tid = "call-1" if idx == 0 else "call-2"
             yield AIMessageChunk(
                 content="",
-                additional_kwargs={"reasoning_content": "First thought"},
+                additional_kwargs={"reasoning_content": f"Thought {idx + 1}"},
             )
-            # Second chunk in same call: tool call
             yield AIMessageChunk(
                 content="",
                 tool_call_chunks=[
                     {
-                        "id": "call-1",
+                        "id": tid,
                         "name": "rag_search",
                         "args": '{"query":"test"}',
                         "index": 0,
                     }
                 ],
             )
-        elif idx == 2:
-            # Third model call: reasoning + tool call
-            yield AIMessageChunk(
-                content="",
-                additional_kwargs={"reasoning_content": "Second thought"},
-            )
-            yield AIMessageChunk(
-                content="",
-                tool_call_chunks=[
-                    {
-                        "id": "call-2",
-                        "name": "rag_read_document",
-                        "args": '{"chunk_ids":[1]}',
-                        "index": 0,
-                    }
-                ],
-            )
         else:
-            # Final model call: text output
+            # Second calls (text) for Agent 1/2, all calls for Agent 3
             yield AIMessageChunk(content="Final answer")
 
     async def _ainvoke_impl(messages):
-        idx = call_count[0]
-        call_count[0] += 1
-        if idx == 0:
-            return AIMessage(
-                content="",
-                tool_calls=[
-                    {"id": "call-1", "name": "rag_search", "args": {"query": "test"}}
-                ],
-            )
-        elif idx == 2:
-            return AIMessage(
-                content="",
-                tool_calls=[
-                    {
-                        "id": "call-2",
-                        "name": "rag_read_document",
-                        "args": {"chunk_ids": [1]},
-                    }
-                ],
-            )
-        else:
-            return AIMessage(content="Final answer")
+        return AIMessage(content="")
 
     def _apply(model: AsyncMock):
         model.astream = _astream_impl

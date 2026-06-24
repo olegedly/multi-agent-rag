@@ -14,7 +14,7 @@ from typing import Annotated, Any
 from uuid import uuid4
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, BaseMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
@@ -284,16 +284,25 @@ async def _run_agent_node(
     try:
         for _iteration in range(MAX_ITERATIONS):
             # ── Stream model output ────────────────────────────────────
+            # Accumulate chunks so we can extract tool_calls with the SAME
+            # tool call IDs the frontend saw during streaming, instead of
+            # making a second non-streaming request (ainvoke) whose IDs
+            # differ (causing orphaned tool calls in the frontend).
+            accumulated: AIMessageChunk | None = None
             async for chunk in model.astream(  # type: ignore[attr-defined]
                 messages,
             ):
                 if isinstance(chunk, BaseMessage):
                     handler.observe(chunk, {"langgraph_node": "agent"})
+                    accumulated = (
+                        chunk if accumulated is None else accumulated + chunk  # type: ignore[operator]
+                    )
                 for event in handler.drain():
                     events.append(event)
 
-            # ── Get the complete response to inspect tool calls ────────
-            result = await model.ainvoke(messages)  # type: ignore[attr-defined]
+            # The accumulated message carries the same tool call IDs that
+            # were streamed to the frontend.
+            result: BaseMessage = accumulated if accumulated is not None else AIMessage(content="")
             messages.append(result)
 
             tool_calls = getattr(result, "tool_calls", [])

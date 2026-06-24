@@ -233,7 +233,7 @@ class StreamEventHandler:
             )
 
     def _observe_tool_result(self, chunk: ToolMessage) -> None:
-        """Emit TOOL_CALL_END + TOOL_CALL_RESULT for a ToolMessage.
+        """Emit TOOL_CALL_END (with embedded result) + TOOL_CALL_RESULT for a ToolMessage.
 
         Also closes any open reasoning block — the next reasoning phase
         from the LLM should start a fresh REASONING_MESSAGE block, not
@@ -243,10 +243,18 @@ class StreamEventHandler:
         tid = chunk.tool_call_id or ""
         raw_content = chunk.content
         self._open_tool_ids.discard(tid)
-        self._pending.append(
-            ToolCallEndEvent(tool_call_id=tid, timestamp=_now_ms()),
-        )
+        # TOOL_CALL_END first — carries the tool result so the frontend's
+        # handleToolCallEndEvent creates the result part directly.
+        end_event = ToolCallEndEvent(tool_call_id=tid, timestamp=_now_ms())
         content_str = cast(str, raw_content) if isinstance(raw_content, str) else ""
+        # Pydantic v2 serialises extra fields: the TanStack AI frontend
+        # StreamProcessor checks chunk.result on TOOL_CALL_END to create
+        # the tool-result part and transition state to "complete".
+        end_event.result = content_str  # type: ignore[attr-defined]
+        end_event.state = "output-available"  # type: ignore[attr-defined]
+        self._pending.append(end_event)
+        # Separate TOOL_CALL_RESULT for AG-UI spec compliance (redundant
+        # but harmless — frontend tools already transitioned by END).
         self._pending.append(
             ToolCallResultEvent(
                 message_id=self._message_id,

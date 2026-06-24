@@ -26,7 +26,7 @@ from ag_ui.core.events import (
     ToolCallStartEvent,
 )
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
 from backend.corpus_config import CorporaConfig
 
@@ -201,18 +201,25 @@ class TestPipelineTextEvents:
 def mock_tool_calls():
     """Set up model for tool-calling agent.
 
-    Each agent: astream yields tool call chunks, ainvoke returns AIMessage
-    with tool_calls, then after tool result, astream yields answer, ainvoke
-    returns final AIMessage.
+    Each agent needs two model calls:
+      1. astream yields tool call chunks (first call, no ToolMessages yet)
+      2. astream yields answer text (second call, after tool results fed back)
 
-    3 agents × (astream + ainvoke + astream + ainvoke) = 12 calls tracked.
+    Decision is data-driven: if ``messages`` already contains a ToolMessage
+    (tool execution result from a previous iteration) the model streams text;
+    otherwise it streams tool call chunks.  This mirrors real model behaviour
+    where tool call IDs from streaming chunks are used for tool execution.
+
+    3 agents × (tool-chunk stream + text stream) = 6 astream calls.
     """
-    call_count: list[int] = [0]
 
     async def _astream_impl(messages, **kwargs):
-        idx = call_count[0]
-        # Even indices (0, 2, 4) = first model call with tool calls
-        if idx % 2 == 0:
+        # Check if any prior tool result exists in the conversation
+        has_tool_results = any(
+            isinstance(m, ToolMessage) for m in messages
+        )
+        if not has_tool_results:
+            # First call: tool call chunks
             yield AIMessageChunk(
                 content="",
                 tool_call_chunks=[
@@ -231,15 +238,17 @@ def mock_tool_calls():
                 ],
             )
         else:
-            # Odd indices = second model call with answer
+            # Second call: answer text
             yield AIMessageChunk(content="Based on search results")
             yield AIMessageChunk(content=" EU AI Act affects...")
 
     async def _ainvoke_impl(messages):
-        idx = call_count[0]
-        call_count[0] += 1
-        if idx % 2 == 0:
-            # First call: tool calls
+        # Still needed by orchestrator if ainvoke is called directly anywhere
+        # Return a consistent AIMessage that matches the streaming chunks.
+        has_tool_results = any(
+            isinstance(m, ToolMessage) for m in messages
+        )
+        if not has_tool_results:
             return AIMessage(
                 content="",
                 tool_calls=[
@@ -251,7 +260,6 @@ def mock_tool_calls():
                 ],
             )
         else:
-            # Second call: final answer
             return AIMessage(content="Based on search results EU AI Act affects...")
 
     def _apply(model: AsyncMock):
