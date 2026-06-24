@@ -25,6 +25,12 @@ export interface CollapsibleSectionProps {
    * restarts each time a new chunk arrives.
    */
   resetTimerOn?: unknown;
+  /**
+   * When true, the stop-tick context (stream-end / Stop button) will
+   * NOT collapse this section.  Used by ToolResultPartRenderer which
+   * wants only the autoCollapseMs timer, not an immediate collapse.
+   */
+  disableStopCollapse?: boolean;
 }
 
 export function CollapsibleSection(props: CollapsibleSectionProps) {
@@ -89,10 +95,11 @@ export function CollapsibleSection(props: CollapsibleSectionProps) {
     ),
   );
 
-  // Collapse when stopTick ticks (stream end or Stop).
-  // Uses Context to work across <Index>/<For> boundaries.
+  // Collapse when stopTick ticks (stream end or Stop), unless
+  // this section has opted out (e.g. tool results use autoCollapseMs).
   createEffect(
     on(stopTick, (tick) => {
+      if (props.disableStopCollapse) return;
       if (tick > 0 && !userInteracted && expanded()) {
         if (timerRef !== undefined) {
           clearTimeout(timerRef);

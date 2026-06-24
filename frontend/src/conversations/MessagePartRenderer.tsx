@@ -320,7 +320,7 @@ function ToolResultPartRenderer(props: {
         label="Result"
         expanded={props.isNew}
         autoCollapseMs={props.isNew ? 1500 : undefined}
-        collapseOnTick={props.nextToolCallTick}
+        disableStopCollapse
         resetTimerOn={props.part.content}
         leadingIcon={
           <svg
