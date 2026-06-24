@@ -86,11 +86,13 @@ export function createToolResultTracker(
    * loading session) correctly return false.
    */
   const isNew = (msgId: string, toolCallId: string): boolean => {
-    // Lazy-init: snapshot loading() on first call, cache for the session.
-    // This handles the race where isLoading flips in the same batch
-    // as the tool result appearing (the effect hasn't run yet).
+    // Lazy-init: if hasLoadedSinceMount is still undefined, snapshot
+    // loading().  If it's true, cache it permanently.  If false, leave
+    // as undefined so the next isNew() call during streaming can re-check
+    // (the effect that sets hasLoadedSinceMount=true may not have fired yet).
     if (hasLoadedSinceMount === undefined) {
-      hasLoadedSinceMount = loading();
+      const loadingNow = loading();
+      if (loadingNow) hasLoadedSinceMount = true;
     }
     if (!hasLoadedSinceMount) return false;
     const key = `${msgId}:${toolCallId}`;
