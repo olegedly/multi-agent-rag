@@ -8,6 +8,8 @@ export interface Conversation {
   title: string;
   createdAt: number;
   messages: UIMessage[];
+  /** Persisted mapping of messageId → agent name, survives page reload. */
+  agentNames?: Record<string, string>;
 }
 
 const LS_PREFIX = "conversation:";
@@ -67,6 +69,7 @@ function createConversation(): Conversation {
     title: "New conversation",
     createdAt: Date.now(),
     messages: [],
+    agentNames: {},
   };
 }
 
@@ -75,9 +78,10 @@ export interface ConversationStore {
   currentId: () => string;
   currentConversation: () => Conversation | undefined;
   getCurrentMessages: () => UIMessage[];
+  getCurrentAgentNames: () => Record<string, string>;
   createNew: () => string;
   switchTo: (id: string) => void;
-  saveCurrentMessages: (messages: UIMessage[]) => void;
+  saveCurrentMessages: (messages: UIMessage[], agentNames?: Record<string, string>) => void;
   removeCurrent: () => void;
   updateCurrentTitle: (title: string) => void;
   storageError: () => string | null;
@@ -131,6 +135,11 @@ export function createConversationStore(): ConversationStore {
       return cur ? [...cur.messages] : [];
     },
 
+    getCurrentAgentNames(): Record<string, string> {
+      const cur = currentConversation();
+      return cur?.agentNames ?? {};
+    },
+
     createNew() {
       // If there's already a fresh empty conversation (title "New conversation",
       // no messages), switch to it instead of creating a duplicate. This
@@ -160,7 +169,7 @@ export function createConversationStore(): ConversationStore {
       }
     },
 
-    saveCurrentMessages(messages: UIMessage[]) {
+    saveCurrentMessages(messages: UIMessage[], agentNames?: Record<string, string>) {
       const cur = currentConversation();
       if (!cur) return;
 
@@ -169,7 +178,11 @@ export function createConversationStore(): ConversationStore {
       // (e.g., a stale beforeunload handler or HMR teardown race)
       // from silently wiping a conversation's history.
       if (messages.length === 0 && cur.messages.length > 0) return;
-      const updated: Conversation = { ...cur, messages };
+      const updated: Conversation = {
+        ...cur,
+        messages,
+        agentNames: agentNames ?? cur.agentNames,
+      };
       // Mutate the conversations array
       const convs = conversations().map((c) =>
         c.id === cur.id ? updated : c

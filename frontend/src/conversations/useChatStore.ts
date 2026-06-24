@@ -1,6 +1,7 @@
 import { onCleanup, onMount, createSignal } from "solid-js";
 import { fetchServerSentEvents, useChat } from "@tanstack/ai-solid";
 import type { UIMessage } from "@tanstack/ai-client";
+import type { StreamChunk } from "@tanstack/ai";
 import { createConversationStore } from "./store";
 import { generateTitle } from "./title";
 import { resilientFetch } from "./resilientFetch";
@@ -10,10 +11,34 @@ const SAVE_KEY = "chat:hasUnsaved";
 export function useChatStore() {
   const store = createConversationStore();
 
+  // Map of messageId → agent name (captured from TEXT_MESSAGE_START events)
+  const [agentNameMap, setAgentNameMap] = createSignal<Record<string, string>>({});
+  // Set of message IDs that have received TEXT_MESSAGE_END.
+  // Used to collapse thinking blocks when their agent finishes.
+  const [endedMessageIds, setEndedMessageIds] = createSignal<Set<string>>(new Set());
+
+  /** Restore agent name map from the persisted conversation. */
+  const restoreAgentNames = () => {
+    setAgentNameMap(store.getCurrentAgentNames());
+  };
+
   const chat = useChat({
     connection: fetchServerSentEvents("/api/chat/eu-ai-act", {
       fetchClient: resilientFetch,
     }),
+    onChunk: (chunk: StreamChunk) => {
+      if (
+        chunk.type === "TEXT_MESSAGE_START" &&
+        "name" in chunk &&
+        typeof (chunk as any).name === "string"
+      ) {
+        const name = (chunk as any).name as string;
+        setAgentNameMap((prev) => ({ ...prev, [chunk.messageId]: name }));
+      }
+      if (chunk.type === "TEXT_MESSAGE_END") {
+        setEndedMessageIds((prev) => new Set(prev).add(chunk.messageId));
+      }
+    },
   });
 
   // Tick that increments when a new conversation is created, so
@@ -25,7 +50,7 @@ export function useChatStore() {
     const msgs = chat.messages();
     if (msgs.length > 0) {
       const title = deriveTitle(msgs);
-      store.saveCurrentMessages(msgs);
+      store.saveCurrentMessages(msgs, agentNameMap());
       if (title) {
         store.updateCurrentTitle(title);
       }
@@ -44,6 +69,7 @@ export function useChatStore() {
     store.switchTo(id);
     const msgs = store.getCurrentMessages();
     chat.setMessages(msgs);
+    restoreAgentNames();
   };
 
   // Create new conversation
@@ -56,6 +82,7 @@ export function useChatStore() {
     chat.clear();
     store.createNew();
     localStorage.removeItem(SAVE_KEY);
+    setAgentNameMap({});
     setFocusTick((t) => t + 1);
   };
 
@@ -70,6 +97,7 @@ export function useChatStore() {
     store.removeCurrent();
     const msgs = store.getCurrentMessages();
     chat.setMessages(msgs);
+    restoreAgentNames();
   };
 
   const stop = () => {
@@ -116,6 +144,7 @@ export function useChatStore() {
     if (initialMsgs.length > 0) {
       chat.setMessages(initialMsgs);
     }
+    restoreAgentNames();
 
     const handleBeforeUnload = () => {
       const msgs = chat.messages();
@@ -140,6 +169,8 @@ export function useChatStore() {
     error: () => chat.error()?.message ?? null,
     status: chat.status,
     connectionStatus: chat.connectionStatus,
+    agentNameMap,
+    endedMessageIds,
     sendMessage,
     stop,
     clear: chat.clear,

@@ -128,7 +128,8 @@ class TestToolCalls:
         return h
 
     def test_new_tool_call_emits_start_and_args(self, handler):
-        """First tool call chunk for a new id emits START + ARGS."""
+        """First tool call chunk for a new id emits TEXT_MESSAGE_START,
+        then TOOL_CALL_START + ARGS."""
         chunk = AIMessageChunk(
             content="",
             tool_call_chunks=[
@@ -138,13 +139,17 @@ class TestToolCalls:
         handler.observe(chunk, {"langgraph_node": "agent"})
         events = handler.drain()
 
-        assert len(events) >= 2
-        start = events[0]
+        assert len(events) >= 3
+        # TEXT_MESSAGE_START is emitted first so the frontend has a
+        # UIMessage to route tool calls to.
+        assert isinstance(events[0], TextMessageStartEvent)
+
+        start = events[1]
         assert isinstance(start, ToolCallStartEvent)
         assert start.tool_call_id == "call-1"
         assert start.tool_call_name == "rag_search"
 
-        args = events[1]
+        args = events[2]
         assert isinstance(args, ToolCallArgsEvent)
         assert args.tool_call_id == "call-1"
         assert args.delta == '{"query":'
@@ -264,21 +269,27 @@ class TestReasoning:
         return h
 
     def test_reasoning_opens_block(self, handler):
-        """Chunks with reasoning_content emit STEP_STARTED + REASONING_MESSAGE_START + CONTENT."""
+        """Chunks with reasoning_content emit TEXT_MESSAGE_START, then
+        STEP_STARTED + REASONING_MESSAGE_START + CONTENT."""
         chunk = AIMessageChunk(content="", additional_kwargs={"reasoning_content": "Let me think"})
         handler.observe(chunk, {"langgraph_node": "agent"})
         events = handler.drain()
 
-        assert len(events) >= 3
-        step = events[0]
+        # TEXT_MESSAGE_START must come first so the frontend has a message
+        # to route all subsequent content to.
+        assert len(events) >= 4
+        text_start = events[0]
+        assert isinstance(text_start, TextMessageStartEvent)
+
+        step = events[1]
         assert isinstance(step, StepStartedEvent)
         assert step.step_name == "reasoning"
 
-        start = events[1]
+        start = events[2]
         assert isinstance(start, ReasoningMessageStartEvent)
         assert start.message_id is not None
 
-        content = events[2]
+        content = events[3]
         assert isinstance(content, ReasoningMessageContentEvent)
         assert content.delta == "Let me think"
 
@@ -372,23 +383,101 @@ class TestReasoning:
         assert content_events3[0].delta == "Second thought"
 
     def test_reasoning_then_text(self, handler):
-        """Reasoning block closes when text starts."""
+        """Reasoning closes when text starts. TEXT_MESSAGE_START was already
+        emitted with the reasoning block, so no new TEXT_MESSAGE_START."""
         chunk1 = AIMessageChunk(content="", additional_kwargs={"reasoning_content": "Hmm"})
         handler.observe(chunk1, {"langgraph_node": "agent"})
-        handler.drain()  # START + CONTENT
+        # First drain includes TEXT_MESSAGE_START + STEP_STARTED +
+        # REASONING_MESSAGE_START + REASONING_MESSAGE_CONTENT
+        handler.drain()
 
         chunk2 = AIMessageChunk(content="Answer here")
         handler.observe(chunk2, {"langgraph_node": "agent"})
         events = handler.drain()
 
-        # Should see REASONING_MESSAGE_END + TEXT_MESSAGE_START + CONTENT
+        # Should see REASONING_MESSAGE_END + CONTENT (TEXT_MESSAGE_START
+        # was already emitted alongside the reasoning block)
         end_events = [e for e in events if isinstance(e, ReasoningMessageEndEvent)]
         assert len(end_events) == 1
+
         text_starts = [e for e in events if isinstance(e, TextMessageStartEvent)]
-        assert len(text_starts) == 1
+        assert len(text_starts) == 0, (
+            "TEXT_MESSAGE_START was already emitted in first drain with reasoning"
+        )
+
+        content_events = [e for e in events if isinstance(e, TextMessageContentEvent)]
+        assert len(content_events) == 1
+        assert content_events[0].delta == "Answer here"
 
 
-# ── Tracer bullet 5: finalize() ───────────────────────────────────────────
+# ── Tracer bullet 5: reasoning emits TEXT_MESSAGE_START first ────────────
+
+
+class TestReasoningTextStartOrder:
+    """When reasoning appears, TEXT_MESSAGE_START must precede reasoning events.
+
+    The frontend StreamProcessor creates a UIMessage only on
+    TEXT_MESSAGE_START. If reasoning events (STEP_STARTED,
+    REASONING_MESSAGE_CONTENT) arrive before TEXT_MESSAGE_START, the
+    frontend creates an orphan auto-message for the reasoning, and then
+    a *second* UIMessage when TEXT_MESSAGE_START finally arrives. This
+    causes per-agent thinking to leak into the previous agent's bubble.
+    """
+
+    @pytest.fixture
+    def handler(self):
+        h = StreamEventHandler(
+            thread_id="th-1", run_id="run-1", message_id="msg-1",
+            agent_name="Critic",
+        )
+        h.drain()  # discard RUN_STARTED
+        return h
+
+    def test_text_start_before_reasoning_events(self, handler):
+        """TEXT_MESSAGE_START appears before STEP_STARTED when reasoning content
+        is the first chunk."""
+        chunk = AIMessageChunk(
+            content="",
+            additional_kwargs={"reasoning_content": "Let me think..."},
+        )
+        handler.observe(chunk, {"langgraph_node": "agent"})
+        events = handler.drain()
+
+        # Must have a TEXT_MESSAGE_START
+        text_starts = [e for e in events if isinstance(e, TextMessageStartEvent)]
+        assert len(text_starts) >= 1
+
+        # Must have a STEP_STARTED
+        step_starts = [e for e in events if isinstance(e, StepStartedEvent)]
+        assert len(step_starts) == 1
+
+        # TEXT_MESSAGE_START must appear BEFORE STEP_STARTED in the event list
+        text_start_idx = next(
+            i for i, e in enumerate(events) if isinstance(e, TextMessageStartEvent)
+        )
+        step_start_idx = next(
+            i for i, e in enumerate(events) if isinstance(e, StepStartedEvent)
+        )
+        assert text_start_idx < step_start_idx, (
+            f"TEXT_MESSAGE_START at index {text_start_idx} must come before "
+            f"STEP_STARTED at index {step_start_idx}"
+        )
+
+    def test_text_start_carries_agent_name_with_reasoning(self, handler):
+        """TEXT_MESSAGE_START emitted alongside reasoning carries agent_name."""
+        chunk = AIMessageChunk(
+            content="",
+            additional_kwargs={"reasoning_content": "Thinking..."},
+        )
+        handler.observe(chunk, {"langgraph_node": "agent"})
+        events = handler.drain()
+
+        text_starts = [e for e in events if isinstance(e, TextMessageStartEvent)]
+        assert len(text_starts) >= 1
+        assert text_starts[0].name == "Critic"
+
+
+# ── Tracer bullet 6: finalize() ───────────────────────────────────────────
 
 
 class TestFinalize:
@@ -451,7 +540,82 @@ class TestFinalize:
         return h
 
 
-# ── Tracer bullet 6: error() ──────────────────────────────────────────────
+# ── Tracer bullet 7: agent_name ─────────────────────────────────────────────
+
+
+class TestAgentName:
+    """agent_name constructor param populates TextMessageStartEvent.name."""
+
+    def test_agent_name_on_text_start(self):
+        """TextMessageStartEvent.name is set from agent_name param."""
+        handler = StreamEventHandler(
+            thread_id="th-1", run_id="run-1", message_id="msg-1",
+            agent_name="Researcher",
+        )
+        handler.drain()  # RUN_STARTED
+        handler.observe(AIMessageChunk(content="Hello"), {"langgraph_node": "agent"})
+        events = handler.drain()
+
+        starts = [e for e in events if isinstance(e, TextMessageStartEvent)]
+        assert len(starts) == 1
+        assert starts[0].name == "Researcher"
+
+    def test_no_agent_name_defaults_to_none(self):
+        """When agent_name is not set, TextMessageStartEvent.name is None (backward compat)."""
+        handler = StreamEventHandler(
+            thread_id="th-1", run_id="run-1", message_id="msg-1",
+        )
+        handler.drain()
+        handler.observe(AIMessageChunk(content="Hello"), {"langgraph_node": "agent"})
+        events = handler.drain()
+
+        starts = [e for e in events if isinstance(e, TextMessageStartEvent)]
+        assert len(starts) == 1
+        assert starts[0].name is None
+
+
+# ── Tracer bullet 8: suppress_run_started ──────────────────────────────────
+
+
+class TestSuppressRunStarted:
+    """suppress_run_started flag skips RUN_STARTED on first drain."""
+
+    def test_suppress_run_started_omits_run_started(self):
+        """When suppress_run_started=True, first drain yields no RUN_STARTED."""
+        handler = StreamEventHandler(
+            thread_id="th-1", run_id="run-1", message_id="msg-1",
+            suppress_run_started=True,
+        )
+        events = handler.drain()
+        assert all(not isinstance(e, RunStartedEvent) for e in events)
+
+    def test_observer_and_finalize_still_work_with_suppress(self):
+        """When suppress_run_started=True, observe/finalize still work normally."""
+        handler = StreamEventHandler(
+            thread_id="th-1", run_id="run-1", message_id="msg-1",
+            suppress_run_started=True,
+        )
+        handler.drain()  # empty
+        handler.observe(AIMessageChunk(content="Hello"), {"langgraph_node": "agent"})
+        events = handler.drain()
+
+        starts = [e for e in events if isinstance(e, TextMessageStartEvent)]
+        assert len(starts) == 1
+        assert starts[0].name is None
+
+        finals = handler.finalize()
+        assert any(isinstance(e, RunFinishedEvent) for e in finals)
+
+    def test_suppress_false_by_default(self):
+        """suppress_run_started defaults to False for backward compat."""
+        handler = StreamEventHandler(
+            thread_id="th-1", run_id="run-1", message_id="msg-1",
+        )
+        events = handler.drain()
+        assert any(isinstance(e, RunStartedEvent) for e in events)
+
+
+# ── End of file ─────────────────────────────────────────────────────────────
 
 
 class TestError:

@@ -81,7 +81,7 @@ SolidJS SPA ──SSE──▶ FastAPI ──▶ LangChain Pipeline
 
 **1. LLM Layer**
 
-LangChain's `ChatOpenAI` (or `ChatAnthropic` for Claude) handles model interaction. The provider, model name, API key, and base URL are configured via environment variables (`LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`) read by Pydantic `Settings` — swapping providers is a config change, not a code change. The `HttpTransport` and `LLMError` types from the earlier custom LLM layer remain in use by the embedding client; all model interaction now goes through LangChain's built-in classes.
+LangChain's `ChatOpenAI` (or `ChatAnthropic` for Claude) handles model interaction. The provider, model name, API key, and base URL are configured via environment variables (`LLM_MODEL`, `LLM_API_KEY`, `LLM_BASE_URL`) read by Pydantic `Settings` — swapping providers is a config change, not a code change.
 
 **2. Database Layer (`backend/db.py` + `backend/models.py`)**
 
@@ -280,33 +280,9 @@ LangSmith traces each agent's turns, tool calls, token usage, and latency. `LANG
 
 ### What is tested
 
-| Module | How | What it covers |
-|---|---|---|
-| `frontend/.../title.ts` | `generateTitle` pure function | Empty string, whitespace, word-boundary truncation, trailing-punctuation trimming, single-word edge cases — 8 tests |
-| `frontend/.../useChatStore` (store.ts) | `createConversationStore` | Auto-creation, localStorage CRUD, switch/delete/create, corrupt-data tolerance, last-conversation auto-create — 9 tests |
-| `frontend/.../Sidebar.tsx` | `render` + `fireEvent` | Renders list, highlights current, empty state, onNew/onSelect callbacks, trash buttons per row, confirm/cancel hidden on mount — 7 tests |
-| `frontend/.../ChatView.tsx` | `render` + `createSignal` mocks | Message rendering, send/stop buttons, disabled-during-loading, error banner, storage error dismiss, typing indicator logic — 11 tests |
-| `frontend/.../deriveTitle` (useChatStore internals) | Pure-function inline | First-user-message extraction from `UIMessage[]`, multi-part text, no-text-parts, truncation, whitespace fallback — 9 tests |
-| `frontend/.../useChatErrorPropagation` (resilientFetch) | Live `useChat` hook + `fetchServerSentEvents` | Non-ok HTTP response triggers error path via resilientFetch; RUN_ERROR event surfaces to `chat.error`; no silent swallow — 12 tests |
+Frontend tests: pure-function tests for title generation, conversation store CRUD, component rendering (Sidebar, ChatView), stream error propagation, tool result formatting, and message grouping. Runs in CI.
 
-Frontend tests: **56 tests across 6 files**, all passing. Runs in CI.
-
-| Module | How | What it covers |
-|---|---|---|
-| `backend/rag/chunker.py` | Pure function | `MarkdownHeadingChunker` preserves heading boundaries; `ParagraphChunker` merges small paras; `RecursiveChunker` respects separator priority; mid-word splits prevented — 8 tests |
-| `backend/rag/search.py` | Mock embedding client + in-memory chunk store | `search_corpus` returns only chunks from correct corpus; `read_document` returns source-level context; scores are cosine similarity [0,1]; missing corpus_id returns empty — 5 tests |
-| `backend/config.py` | Fixture-based env override | Defaults, `database_url` property, `extra='ignore'` |
-| `backend/corpus_config.py` | Fixture-based | List, get by slug/id, chunker resolution, duplicate detection, YAML loading — 10 tests |
-| `backend/middleware.py` | `TestClient` | Budget file read/write/exhaust; ChatGuard blocks/exhausts; budget bypass; query length validation — 21 tests |
-| `backend/agents/langchain_tools.py` | `FakeSessionMaker` + `FakeEmbeddingClient` | Tool shape (BaseTool), corpus-scoped results, cross-corpus isolation, error handling — 11 tests |
-| `backend/agents/pipeline.py` | Mocked `create_agent` + `AsyncMock` | AG-UI event sequence, RunStartedEvent fields, text message lifecycle, RunFinishedEvent passthrough, empty content skip, unknown corpus — 6 tests |
-| `backend/main.py` (SSE endpoint) | `TestClient` + monkeypatch | SSE content-type, unknown slug 404, parseable AG-UI events, middleware integration — 7 tests |
-| `scripts/seed_knowledge_base.py` | Fake file system + fake DB | New files inserted; unchanged skipped; deleted removed; changed re-processed — 6 tests |
-| `backend/mcp_server/server.py` | `FakeSearch` | `search_corpus` with corpus_id returns scoped results; missing corpus_id returns error; `read_document` returns source-level chunks — 4 tests |
-| `backend/llm/*.py` | `FakeTransport` / `pytest-httpx` | Request body shape, SSE parsing, error handling — 56 tests across transport, openai, anthropic, protocol, factory |
-| `backend/models.py` | Pure ORM | Column types, constraints, indexes — 9 tests |
-
-**Total: 214 tests, all passing.**
+Backend tests: chunker strategies (heading/paragraph/recursive/fixed-size), corpus-scoped search, `read_document` full-context retrieval, config validation, corpus config parsing (YAML, duplicates, slug resolution), middleware (budget read/write/exhaust, query validation), LangChain tool factory (shape, scoping, cross-corpus isolation), pipeline AG-UI event sequencing (RunStarted/TextMessage/ToolCall/RunFinished), SSE endpoint integration, seed script idempotency (insert/update/delete), MCP server tool shape and error handling, embedding factory, and ORM model constraints/indexes. All pure unit tests with no Docker or DB dependency.
 
 ### Modules not yet created (planned)
 

@@ -53,11 +53,13 @@ class StreamEventHandler:
         thread_id: str,
         run_id: str,
         message_id: str | None = None,
+        agent_name: str | None = None,
+        suppress_run_started: bool = False,
     ) -> None:
         self._thread_id = thread_id
         self._run_id = run_id
         self._message_id = message_id or str(uuid4())
-
+        self._agent_name = agent_name
         # Open block tracking
         self._text_open = False
         self._reasoning_open = False
@@ -75,14 +77,16 @@ class StreamEventHandler:
         self._reasoning_step_counter: int = 0
         self._current_reasoning_step_id: str | None = None
 
-        # Draining — run_started is buffered on construction
-        self._pending: list[BaseEvent] = [
-            RunStartedEvent(
-                thread_id=thread_id,
-                run_id=run_id,
-                timestamp=_now_ms(),
-            ),
-        ]
+        # Draining — run_started is buffered on construction unless suppressed
+        self._pending: list[BaseEvent] = []
+        if not suppress_run_started:
+            self._pending = [
+                RunStartedEvent(
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    timestamp=_now_ms(),
+                ),
+            ]
 
     # ------------------------------------------------------------------
     # Public API
@@ -161,7 +165,9 @@ class StreamEventHandler:
         # Reasoning (if present)
         raw_reasoning = chunk.additional_kwargs.get("reasoning_content")
         if raw_reasoning and isinstance(raw_reasoning, str):
-            self._close_text()  # can't interleave, but text may be open
+            # ``_ensure_reasoning_open`` calls ``_ensure_text_open`` so the
+            # frontend has a ``UIMessage`` to route content to. Text stays
+            # open for the duration of this agent — no need to close it here.
             self._ensure_reasoning_open()
             # DeepSeek sends the full accumulated reasoning_content in each
             # chunk. Diff against the previous text and emit only the new portion.
@@ -182,6 +188,11 @@ class StreamEventHandler:
 
         # Tool call chunks
         if chunk.tool_call_chunks:
+            # Emit TEXT_MESSAGE_START first so the frontend has a UIMessage
+            # to route tool calls to (same reasoning as the reasoning fix:
+            # without this, TOOL_CALL_START arrives before any active
+            # assistant message and creates an orphan auto-message).
+            self._ensure_text_open()
             for tcc in chunk.tool_call_chunks:
                 tid = tcc.get("id")
                 idx = tcc.get("index")
@@ -200,18 +211,12 @@ class StreamEventHandler:
                         delta=tcc["args"] or "",
                     ),
                 )
-            # If there's also text content alongside tool calls, emit it
-            # but make sure text block is open.
-            raw_content = chunk.content
-            if raw_content:
-                self._ensure_text_open()
-                delta = cast(str, raw_content) if isinstance(raw_content, str) else ""
-                self._pending.append(
-                    TextMessageContentEvent(
-                        message_id=self._message_id,
-                        delta=delta,
-                    ),
-                )
+            # Don't emit text content alongside tool calls — the ``content``
+            # field in such chunks typically contains the model's internal
+            # JSON representation of the tool call arguments, not actual
+            # assistant response text.  Actual text arrives in subsequent
+            # chunks (after tool results are fed back) that do NOT carry
+            # tool_call_chunks.
             return
 
         # Plain text content
@@ -228,7 +233,7 @@ class StreamEventHandler:
             )
 
     def _observe_tool_result(self, chunk: ToolMessage) -> None:
-        """Emit TOOL_CALL_END + TOOL_CALL_RESULT for a ToolMessage.
+        """Emit TOOL_CALL_END (with embedded result) + TOOL_CALL_RESULT for a ToolMessage.
 
         Also closes any open reasoning block — the next reasoning phase
         from the LLM should start a fresh REASONING_MESSAGE block, not
@@ -238,10 +243,18 @@ class StreamEventHandler:
         tid = chunk.tool_call_id or ""
         raw_content = chunk.content
         self._open_tool_ids.discard(tid)
-        self._pending.append(
-            ToolCallEndEvent(tool_call_id=tid, timestamp=_now_ms()),
-        )
+        # TOOL_CALL_END first — carries the tool result so the frontend's
+        # handleToolCallEndEvent creates the result part directly.
+        end_event = ToolCallEndEvent(tool_call_id=tid, timestamp=_now_ms())
         content_str = cast(str, raw_content) if isinstance(raw_content, str) else ""
+        # Pydantic v2 serialises extra fields: the TanStack AI frontend
+        # StreamProcessor checks chunk.result on TOOL_CALL_END to create
+        # the tool-result part and transition state to "complete".
+        end_event.result = content_str  # type: ignore[attr-defined]
+        end_event.state = "output-available"  # type: ignore[attr-defined]
+        self._pending.append(end_event)
+        # Separate TOOL_CALL_RESULT for AG-UI spec compliance (redundant
+        # but harmless — frontend tools already transitioned by END).
         self._pending.append(
             ToolCallResultEvent(
                 message_id=self._message_id,
@@ -251,7 +264,15 @@ class StreamEventHandler:
         )
 
     def _ensure_reasoning_open(self) -> None:
-        """Emit ``STEP_STARTED`` + ``REASONING_MESSAGE_START`` if not yet open.
+        """Emit ``TEXT_MESSAGE_START``, ``STEP_STARTED``, then
+        ``REASONING_MESSAGE_START`` if not yet open.
+
+        ``_ensure_text_open()`` is called first so the frontend's
+        ``StreamProcessor`` has an active ``UIMessage`` to route all
+        subsequent content (reasoning, text, tool calls) to.  Without this,
+        reasoning events arrive before ``TEXT_MESSAGE_START``, causing the
+        frontend to either create orphan auto-messages or leak reasoning into
+        the previous agent's message.
 
         ``STEP_STARTED`` with a unique ``stepId`` is required because the
         frontend's ``StreamProcessor`` ignores ``REASONING_MESSAGE_START``/``END``
@@ -261,6 +282,9 @@ class StreamEventHandler:
         """
         if not self._reasoning_open:
             self._reasoning_open = True
+            # Emit TEXT_MESSAGE_START first so the frontend routes all
+            # content for this agent to the same UIMessage.
+            self._ensure_text_open()
             step_id = f"rs-{self._message_id}-{self._reasoning_step_counter}"
             self._reasoning_step_counter += 1
             self._current_reasoning_step_id = step_id
@@ -282,6 +306,7 @@ class StreamEventHandler:
                 TextMessageStartEvent(
                     message_id=self._message_id,
                     role="assistant",
+                    name=self._agent_name,
                     timestamp=_now_ms(),
                 ),
             )

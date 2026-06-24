@@ -15,6 +15,13 @@ from fastapi.testclient import TestClient
 from backend.config import Settings
 from backend.corpus_config import CorporaConfig
 from backend.main import create_app
+from ag_ui.core.events import (
+    RunFinishedEvent,
+    RunStartedEvent,
+    TextMessageContentEvent,
+    TextMessageEndEvent,
+    TextMessageStartEvent,
+)
 from backend.middleware import BudgetStore, JsonFileBudget
 
 
@@ -22,8 +29,23 @@ from backend.middleware import BudgetStore, JsonFileBudget
 
 
 async def _noop_pipeline(messages, corpus_slug, **kwargs):
-    """Fake pipeline that yields done immediately — avoids LLM calls."""
-    yield {"type": "done", "finishReason": "stop", "usage": {}}
+    """Fake pipeline that yields AG-UI events immediately — avoids LLM calls.
+
+    Yields the minimal event sequence so ``EventEncoder.encode()`` can
+    serialize it without errors.
+    """
+    ts = 1000000
+    yield RunStartedEvent(thread_id="test-thread", run_id="test-run", timestamp=ts)
+    yield TextMessageStartEvent(message_id="msg-1", role="assistant", timestamp=ts)
+    yield TextMessageContentEvent(message_id="msg-1", delta="", timestamp=ts)
+    yield TextMessageEndEvent(message_id="msg-1", timestamp=ts)
+    yield RunFinishedEvent(
+        thread_id="test-thread",
+        run_id="test-run",
+        timestamp=ts,
+        finishReason="stop",  # type: ignore[call-arg]
+        usage={"promptTokens": 0, "completionTokens": 0},  # type: ignore[call-arg]
+    )
 
 
 TEST_CORPORA = CorporaConfig.from_dicts([
@@ -124,12 +146,11 @@ class TestBudgetMiddleware:
 class TestBudgetDevBypass:
     """When DEMO_DISABLE_BUDGET=true, budget check is skipped."""
 
-    def test_allows_request_when_exhausted(self, tmp_path) -> None:
+    def test_allows_request_when_exhausted(self, tmp_path, monkeypatch) -> None:
         budget = JsonFileBudget(path=str(tmp_path / "budget.json"), daily_limit=50)
         budget.add_tokens(100)
 
-        import backend.agents.pipeline as _pl
-        _pl.run_pipeline = _noop_pipeline  # type: ignore[assignment]
+        monkeypatch.setattr("backend.main.run_pipeline", _noop_pipeline)
 
         app = create_app(
             settings=Settings(
@@ -151,9 +172,8 @@ class TestBudgetDevBypass:
         from backend.middleware import ChatGuard
         assert ChatGuard in mids
 
-    def test_query_still_active_when_budget_disabled(self, tmp_path) -> None:
-        import backend.agents.pipeline as _pl
-        _pl.run_pipeline = _noop_pipeline  # type: ignore[assignment]
+    def test_query_still_active_when_budget_disabled(self, tmp_path, monkeypatch) -> None:
+        monkeypatch.setattr("backend.main.run_pipeline", _noop_pipeline)
 
         app = create_app(
             settings=Settings(demo_disable_budget=True, demo_max_query_length=10, demo_budget_file=str(tmp_path / "budget.json")),

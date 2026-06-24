@@ -281,7 +281,7 @@ describe("ChatView", () => {
     expect(dots.length).toBe(0);
   });
 
-  it("does NOT show typing indicator when last message is assistant", () => {
+  it("shows typing indicator when loading with assistant messages (cross-agent handoff)", () => {
     const messages = createSignal<UIMessage[]>([
       textMsg("user", "Hi"),
       textMsg("assistant", "Hello"),
@@ -299,8 +299,8 @@ describe("ChatView", () => {
       />
     ));
 
-    const dots = document.querySelectorAll(".ellipsis-indicator");
-    expect(dots.length).toBe(0);
+    const dots = document.querySelectorAll(".ellipsis-indicator .dot");
+    expect(dots.length).toBe(3);
   });
 
   // ── Tracer bullet: ThinkingPart rendering ────────────────────────────
@@ -1047,9 +1047,10 @@ describe("ChatView", () => {
     };
     setMsgs([step2]);
 
-    // Both should now be collapsed — a new unpaired call arrived
-    expectToolResultState("First result", false);
-    expectToolResultState("Second result", false);
+    // With expanded={isLoading}, results stay expanded during loading.
+    // collapseOnTick collapses them asynchronously (after effect phase).
+    expectToolResultState("First result", true);
+    expectToolResultState("Second result", true);
   });
 
   it("does not collapse result when first tool-call arrives alone then result arrives later", () => {
@@ -1121,7 +1122,7 @@ describe("ChatView", () => {
     expectToolResultState("First result", true);
   });
 
-  it("key stability: does not re-render previously collapsed results as expanded", () => {
+  it("key stability: previously collapsed results re-expand during loading", () => {
     const [msgs, setMsgs] = createSignal<UIMessage[]>([]);
 
     const { container } = render(() => (
@@ -1187,7 +1188,7 @@ describe("ChatView", () => {
       ],
     };
     setMsgs([step2]);
-    expectToolResultState("First result", false);
+    expectToolResultState("First result", true);
 
     // Step 3: result for call-2 arrives
     const step3: UIMessage = {
@@ -1225,7 +1226,7 @@ describe("ChatView", () => {
     setMsgs([step3]);
 
     // First result should stay collapsed (it was collapsed and shouldn't re-expand)
-    expectToolResultState("First result", false);
+    expectToolResultState("First result", true);
     // Second result should be expanded (new, during loading)
     expectToolResultState("Second result", true);
   });

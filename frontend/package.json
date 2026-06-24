@@ -1,7 +1,7 @@
 {
   "name": "multi-agent-rag-frontend",
   "version": "0.0.0",
-  "description": "A production-grade multi-agent research system built with Google ADK, MCP, and pgvector. Three specialist AI agents (Researcher, Critic, Synthesizer) collaborate via the Model Context Protocol to answer questions about MCP and ADK documentation — cited, grounded, and streamed live to a SolidJS dashboard.",
+  "description": "A multi-agent research system with pgvector RAG, MCP tool servers, and a LangChain agent pipeline. Three specialist AI agents (Researcher, Critic, Synthesizer) collaborate to answer questions grounded in curated knowledge bases — cited, grounded, and streamed live to a SolidJS dashboard.",
   "type": "module",
   "scripts": {
     "start": "vite",
