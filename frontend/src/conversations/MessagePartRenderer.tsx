@@ -37,13 +37,17 @@ export interface MessagePartRendererProps {
 // ── Main renderer ────────────────────────────────────────────────────────
 
 export function MessagePartRenderer(props: MessagePartRendererProps) {
-  const { msg, isLoading, nextToolCallTick, isNewToolResult, agentNameMap } = props;
-  const agentName = msg.role === "assistant" ? agentNameMap?.[msg.id] : undefined;
+  const { msg, isLoading, nextToolCallTick, isNewToolResult, agentNameMap } =
+    props;
+  const agentName =
+    msg.role === "assistant" ? agentNameMap?.[msg.id] : undefined;
 
   return (
     <>
       <div class="text-xs font-medium mb-1 opacity-70 capitalize">
-        {agentName ? `${AGENT_NAME_EMOJI[agentName] ?? ""} ${agentName}` : msg.role}
+        {agentName
+          ? `${AGENT_NAME_EMOJI[agentName] ?? ""} ${agentName}`
+          : msg.role}
       </div>
       {/* Use Index (position-based reconciliation) so that existing
           ToolResultPartRenderer instances survive when new parts
@@ -190,7 +194,7 @@ function ThinkingPartRenderer(props: {
         }
       >
         <div class="mt-1 p-2 rounded-lg bg-(--bg-primary) border border-(--border) text-xs text-(--text-secondary) italic whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto">
-          {props.part.content}
+          {props.part.content.trim()}
         </div>
       </CollapsibleSection>
     </div>
