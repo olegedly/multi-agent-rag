@@ -123,6 +123,7 @@ function PartRenderer(props: {
           isNew={props.isNewToolResult}
           nextToolCallTick={props.nextToolCallTick}
           isLoading={props.isLoading}
+          msgId={props.msgId}
         />
       )}
     </>
@@ -156,6 +157,7 @@ function ToolCallPairRenderer(props: {
             isNew={props.isNewToolResult}
             isLoading={props.isLoading}
             nextToolCallTick={props.nextToolCallTick}
+            msgId={props.msgId}
           />
         )}
       </Show>
@@ -318,17 +320,25 @@ function ToolResultPartRenderer(props: {
   isNew: boolean;
   isLoading: boolean;
   nextToolCallTick: number;
+  msgId: string;
 }) {
-  // Tick that increments when this agent stops streaming.
+  const getEndedSet = useContext(MessageEndedContext) ?? (() => new Set<string>());
+  // Tick that
   // CollapsibleSection watches collapseOnTick and collapses when >0.
   const [agentStopTick, setAgentStopTick] = createSignal(0);
   let wasLoading = props.isLoading;
 
+  // Collapse when this agent's message ends OR when loading stops.
   createEffect(() => {
     if (wasLoading && !props.isLoading) {
       setAgentStopTick((t) => t + 1);
     }
     wasLoading = props.isLoading;
+
+    // Also collapse when TEXT_MESSAGE_END is received.
+    if (getEndedSet().has(props.msgId)) {
+      setAgentStopTick((t) => t + 1);
+    }
   });
 
   return (
