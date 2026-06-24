@@ -18,6 +18,26 @@ export function MessageList(props: MessageListProps) {
   let scrollContainerRef: HTMLDivElement | undefined;
   const [isUserAtBottom, setIsUserAtBottom] = createSignal(true);
 
+  /** Derive agent-specific bubble style, falling back to the default
+   *  assistant bubble when no agent is known.
+   *  Returns undefined for user messages and unnamed assistants. */
+  const agentBubbleStyle = (
+    msg: UIMessage,
+    nameMap?: Record<string, string>,
+  ): Record<string, string> | undefined => {
+    if (msg.role !== "assistant") return undefined;
+    const name = nameMap?.[msg.id];
+    if (!name) return undefined;
+    const key = name.toLowerCase();
+    return {
+      "background-color": `var(--bg-agent-${key})`,
+      color: `var(--text-agent-${key})`,
+      // Override secondary text globally inside agent bubbles so tool
+      // labels, args, and reasoning headers are readable on colored bgs
+      "--text-secondary": "var(--text-agent-secondary)",
+    };
+  };
+
   const handleScroll = () => {
     const el = scrollContainerRef;
     if (!el) return;
@@ -75,6 +95,7 @@ export function MessageList(props: MessageListProps) {
                   ? "bg-(--bg-user-bubble) text-(--text-user-bubble) rounded-br-md"
                   : "bg-(--bg-assistant-bubble) text-(--text-assistant-bubble) border border-(--border) rounded-bl-md"
               }`}
+              style={msg.role !== "user" ? agentBubbleStyle(msg, props.agentNameMap) : undefined}
             >
               <MessagePartRenderer
                 msg={msg}
@@ -85,7 +106,8 @@ export function MessageList(props: MessageListProps) {
 
                 endedMessageIds={props.endedMessageIds}
               />
-            </div>
+          </div>
+
           </div>
         )}
       </For>

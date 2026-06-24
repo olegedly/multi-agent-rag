@@ -14,6 +14,18 @@
   --text-user-bubble: #ffffff;
   --bg-assistant-bubble: #ffffff;
   --text-assistant-bubble: #1e293b;
+
+  /* Agent-specific bubble colors — light theme */
+  --bg-agent-researcher: #c4b5fd;
+  --text-agent-researcher: #1e293b;
+  --bg-agent-critic: #fecdd3;
+  --text-agent-critic: #1e293b;
+  --bg-agent-synthesizer: #a7f3d0;
+  --text-agent-synthesizer: #1e293b;
+
+  /* Secondary text inside agent bubbles — same as main in light,
+     but overridden in dark to improve contrast on colored bgs */
+  --text-agent-secondary: #64748b;
   --sidebar-bg: #ffffff;
   --header-bg: #ffffff;
 
@@ -62,6 +74,17 @@
   --text-user-bubble: #ffffff;
   --bg-assistant-bubble: #1e293b;
   --text-assistant-bubble: #f1f5f9;
+
+
+  /* Agent-specific bubble colors — dark theme */
+  --bg-agent-researcher: #4c1d95;
+  --text-agent-researcher: #f8fafc;
+  --bg-agent-critic: #9f1239;
+  --text-agent-critic: #f8fafc;
+  --bg-agent-synthesizer: #065f46;
+  --text-agent-synthesizer: #f8fafc;
+
+  --text-agent-secondary: #cbd5e1;
   --sidebar-bg: #1e293b;
   --header-bg: #1e293b;
 

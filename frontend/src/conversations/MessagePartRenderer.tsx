@@ -39,14 +39,17 @@ export interface MessagePartRendererProps {
 // ── Main renderer ────────────────────────────────────────────────────────
 
 export function MessagePartRenderer(props: MessagePartRendererProps) {
-  const { msg, isLoading, nextToolCallTick, isNewToolResult, agentNameMap } = props;
-  const endedMessageIds = (useContext(MessageEndedContext) ?? (() => new Set<string>()))();
+  const { msg, isLoading, nextToolCallTick, isNewToolResult, agentNameMap } =
+    props;
+  const endedMessageIds = (
+    useContext(MessageEndedContext) ?? (() => new Set<string>())
+  )();
   const agentName =
     msg.role === "assistant" ? agentNameMap?.[msg.id] : undefined;
 
   return (
     <>
-      <div class="text-xs font-medium mb-1 opacity-70 capitalize">
+      <div class="text-xs font-medium mb-1 capitalize">
         {agentName
           ? `${AGENT_NAME_EMOJI[agentName] ?? ""} ${agentName}`
           : msg.role}
@@ -175,7 +178,9 @@ function ThinkingPartRenderer(props: {
   nextToolCallTick: number;
   msgId: string;
 }) {
-  const endedSet = (useContext(MessageEndedContext) ?? (() => new Set<string>()))();
+  const endedSet = (
+    useContext(MessageEndedContext) ?? (() => new Set<string>())
+  )();
   // Start expanded during active streaming.
   // Stay open through tool-call interleaving — collapse only when the
   // entire stream stops (handled by StopCollapseContext in CollapsibleSection).

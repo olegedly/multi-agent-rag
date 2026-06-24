@@ -17,6 +17,11 @@ export function useChatStore() {
   // Used to collapse thinking blocks when their agent finishes.
   const [endedMessageIds, setEndedMessageIds] = createSignal<Set<string>>(new Set());
 
+  /** Restore agent name map from the persisted conversation. */
+  const restoreAgentNames = () => {
+    setAgentNameMap(store.getCurrentAgentNames());
+  };
+
   const chat = useChat({
     connection: fetchServerSentEvents("/api/chat/eu-ai-act", {
       fetchClient: resilientFetch,
@@ -45,7 +50,7 @@ export function useChatStore() {
     const msgs = chat.messages();
     if (msgs.length > 0) {
       const title = deriveTitle(msgs);
-      store.saveCurrentMessages(msgs);
+      store.saveCurrentMessages(msgs, agentNameMap());
       if (title) {
         store.updateCurrentTitle(title);
       }
@@ -64,6 +69,7 @@ export function useChatStore() {
     store.switchTo(id);
     const msgs = store.getCurrentMessages();
     chat.setMessages(msgs);
+    restoreAgentNames();
   };
 
   // Create new conversation
@@ -76,6 +82,7 @@ export function useChatStore() {
     chat.clear();
     store.createNew();
     localStorage.removeItem(SAVE_KEY);
+    setAgentNameMap({});
     setFocusTick((t) => t + 1);
   };
 
@@ -90,6 +97,7 @@ export function useChatStore() {
     store.removeCurrent();
     const msgs = store.getCurrentMessages();
     chat.setMessages(msgs);
+    restoreAgentNames();
   };
 
   const stop = () => {
@@ -136,6 +144,7 @@ export function useChatStore() {
     if (initialMsgs.length > 0) {
       chat.setMessages(initialMsgs);
     }
+    restoreAgentNames();
 
     const handleBeforeUnload = () => {
       const msgs = chat.messages();
