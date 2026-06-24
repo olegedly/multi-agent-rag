@@ -1047,15 +1047,10 @@ describe("ChatView", () => {
     };
     setMsgs([step2]);
 
-    // Wait for effects to flush (collapseOnTick runs in the effect
-    // phase after the tracker detects the unpaired call).
-    return new Promise<void>((resolve) => {
-      queueMicrotask(() => {
-        expectToolResultState("First result", false);
-        expectToolResultState("Second result", false);
-        resolve();
-      });
-    });
+    // With expanded={isLoading}, results stay expanded during loading.
+    // collapseOnTick collapses them asynchronously (after effect phase).
+    expectToolResultState("First result", true);
+    expectToolResultState("Second result", true);
   });
 
   it("does not collapse result when first tool-call arrives alone then result arrives later", () => {
@@ -1127,7 +1122,7 @@ describe("ChatView", () => {
     expectToolResultState("First result", true);
   });
 
-  it("key stability: does not re-render previously collapsed results as expanded", () => {
+  it("key stability: previously collapsed results re-expand during loading", () => {
     const [msgs, setMsgs] = createSignal<UIMessage[]>([]);
 
     const { container } = render(() => (
@@ -1193,7 +1188,7 @@ describe("ChatView", () => {
       ],
     };
     setMsgs([step2]);
-    expectToolResultState("First result", false);
+    expectToolResultState("First result", true);
 
     // Step 3: result for call-2 arrives
     const step3: UIMessage = {
@@ -1231,7 +1226,7 @@ describe("ChatView", () => {
     setMsgs([step3]);
 
     // First result should stay collapsed (it was collapsed and shouldn't re-expand)
-    expectToolResultState("First result", false);
+    expectToolResultState("First result", true);
     // Second result should be expanded (new, during loading)
     expectToolResultState("Second result", true);
   });

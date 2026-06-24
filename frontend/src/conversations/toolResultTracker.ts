@@ -10,19 +10,6 @@ export interface ToolResultTracker {
 
 /**
  * Creates a reactive tracker for tool result "newness" and auto-collapse ticks.
- *
- * - `isNew` returns true the first time each (msgId, toolCallId) is seen
- *   during a loading session.  Unlike the old implementation it does NOT
- *   gate on `loading()` at call time — that caused a race where tool
- *   results appearing in the same reactive batch as `isLoading=false`
- *   would skip the "new" flag and start collapsed.
- *
- * - A "loading session" begins when `loading` transitions from false to
- *   true.  `seenKeys` is cleared at the start of each session so that
- *   only keys encountered during the *current* streaming run are tracked.
- *
- * - `nextToolCallTick()` increments each time a tool-call without a
- *   matching result appears in `messages` while loading.
  */
 export function createToolResultTracker(
   messages: () => UIMessage[],
@@ -31,17 +18,9 @@ export function createToolResultTracker(
   const seenKeys = new Set<string>();
   const [nextToolCallTick, setNextToolCallTick] = createSignal(0);
   let prevUnpairedCount = 0;
-  // Lazy-init: checked on the FIRST isNew() call.  This avoids the
-  // race where `loading` flips in the same batch as a tool result
-  // appearing — we read the *current* loading state once at call time,
-  // then cache it for the session.  Storage-loaded results correctly
-  // get false; streaming results correctly get true.
   let hasLoadedSinceMount: boolean | undefined;
   let wasLoading = loading();
-  // Reset seen keys at the start of each loading session so that
-  // previously-seen results from an older stream don't block new results.
-  // Track `hasLoadedSinceMount` so storage-loaded results (no loading
-  // session ever) are correctly reported as "not new".
+
   createEffect(() => {
     const now = loading();
     if (now && !wasLoading) {
@@ -56,7 +35,6 @@ export function createToolResultTracker(
       return;
     }
 
-    // Eagerly read messages() so tracking participates in the reactive graph
     const msgs = messages();
 
     const unpairedCount = msgs.reduce((count, msg) => {
@@ -78,33 +56,15 @@ export function createToolResultTracker(
     prevUnpairedCount = unpairedCount;
   });
 
-  /**
-   * Returns true if (msgId, toolCallId) has never been seen during the
-   * current loading session.  Does NOT check `loading()` at call time —
-   * that check is replaced by the `hasLoadedSinceMount` flag which
-   * persists through the entire batch.  Storage-loaded results (no
-   * loading session) correctly return false.
-   *
-   * Lazy-init: only caches `true`.  If `loading()` is false on the
-   * first call, leaves `hasLoadedSinceMount` as `undefined` so the
-   * next call (e.g. during streaming) can re-evaluate.
-   */
   const isNew = (msgId: string, toolCallId: string): boolean => {
     if (hasLoadedSinceMount === undefined) {
       const loadingNow = loading();
       if (loadingNow) hasLoadedSinceMount = true;
     }
-    if (!hasLoadedSinceMount) {
-      console.log("isNew:f", msgId.slice(-6), toolCallId, "ld=", loading(), "hlsm=", hasLoadedSinceMount, "sk=", seenKeys.has(`${msgId}:${toolCallId}`));
-      return false;
-    }
+    if (!hasLoadedSinceMount) return false;
     const key = `${msgId}:${toolCallId}`;
-    if (seenKeys.has(key)) {
-      console.log("isNew:s", msgId.slice(-6), toolCallId, "ld=", loading(), "hlsm=", hasLoadedSinceMount, "sk=y");
-      return false;
-    }
+    if (seenKeys.has(key)) return false;
     seenKeys.add(key);
-    console.log("isNew:T", msgId.slice(-6), toolCallId, "ld=", loading(), "hlsm=", hasLoadedSinceMount);
     return true;
   };
 
