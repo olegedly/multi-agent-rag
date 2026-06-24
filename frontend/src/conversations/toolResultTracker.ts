@@ -84,12 +84,12 @@ export function createToolResultTracker(
    * that check is replaced by the `hasLoadedSinceMount` flag which
    * persists through the entire batch.  Storage-loaded results (no
    * loading session) correctly return false.
+   *
+   * Lazy-init: only caches `true`.  If `loading()` is false on the
+   * first call, leaves `hasLoadedSinceMount` as `undefined` so the
+   * next call (e.g. during streaming) can re-evaluate.
    */
   const isNew = (msgId: string, toolCallId: string): boolean => {
-    // Lazy-init: if hasLoadedSinceMount is still undefined, snapshot
-    // loading().  If it's true, cache it permanently.  If false, leave
-    // as undefined so the next isNew() call during streaming can re-check
-    // (the effect that sets hasLoadedSinceMount=true may not have fired yet).
     if (hasLoadedSinceMount === undefined) {
       const loadingNow = loading();
       if (loadingNow) hasLoadedSinceMount = true;

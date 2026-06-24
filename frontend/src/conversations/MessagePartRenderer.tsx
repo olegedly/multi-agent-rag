@@ -319,11 +319,14 @@ function ToolResultPartRenderer(props: {
   isLoading: boolean;
   nextToolCallTick: number;
 }) {
+  createEffect(() => {
+    console.log("CG:TRPR", "isNew=", props.isNew, "state=", props.part.state, "ld=", props.isLoading);
+  });
   return (
     <div class="mt-2 pl-5">
       <CollapsibleSection
         label="Result"
-        expanded={true}  // FORCE: unconditionally expanded for diagnostics
+        expanded={props.isNew}
         autoCollapseMs={props.isNew ? 1500 : undefined}
         resetTimerOn={props.part.content}
         collapseOnTick={props.nextToolCallTick}
