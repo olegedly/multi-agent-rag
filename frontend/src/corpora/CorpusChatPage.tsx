@@ -54,14 +54,19 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
     }
   });
 
-  // Derive title when first user message appears
+  // Derive title when new user messages arrive — skip initial load so
+  // existing titles (including custom ones) aren't overwritten on remount.
+  let prevMsgCount = 0;
   createEffect(() => {
     const msgs = chat.messages();
-    if (msgs.length > 0) {
+    if (msgs.length > prevMsgCount) {
+      prevMsgCount = msgs.length;
       const title = deriveTitle(msgs);
       if (title) {
         untrack(() => store.updateCurrentTitle(title));
       }
+    } else {
+      prevMsgCount = msgs.length;
     }
   });
 
