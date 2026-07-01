@@ -1,11 +1,21 @@
-import { Show, createEffect, type Component } from "solid-js";
-import { A, useParams, useNavigate } from "@solidjs/router";
+import { Show, createEffect, createContext, useContext, on, type Component, type JSX } from "solid-js";
+import { A, useParams } from "@solidjs/router";
 import { useCorpora } from "./CorporaProvider";
 import { useConversationStore } from "@/conversations/ConversationStoreProvider";
 import { ChatView } from "@/chat/ChatView";
 import { useChat, fetchServerSentEvents } from "@tanstack/ai-solid";
 import { resilientFetch } from "@/chat/resilientFetch";
 import { generateTitle } from "@/conversations/title";
+
+// Module-level switch: set by RootLayout, consumed synchronously by CorpusChatPage.
+// Using a non-reactive slot so the switch logic runs outside SolidJS's batch.
+let _onSwitch: ((id: string) => void) | null = null;
+export function setConversationSwitcher(fn: ((id: string) => void) | null) {
+  _onSwitch = fn;
+}
+export function triggerConversationSwitch(id: string) {
+  _onSwitch?.(id);
+}
 
 export const CorpusChatPage: Component = () => {
   const params = useParams();
@@ -16,7 +26,6 @@ export const CorpusChatPage: Component = () => {
   const isUnknown = () => !corpora.loading() && !corpus();
   const isLoading = () => corpora.loading();
 
-  // SSE connection URL — depends on slug
   const sseUrl = () => `/api/chat/${params.slug}`;
 
   const chat = useChat({
@@ -27,35 +36,40 @@ export const CorpusChatPage: Component = () => {
     },
   });
 
-  // When entering a known corpus, load the most recent conversation for it
-  createEffect(() => {
-    const c = corpus();
-    if (!c) return;
-    const convs = store.conversations().filter((conv) => conv.corpusId === c.id);
-    if (convs.length > 0) {
-      const mostRecent = convs[0]; // already sorted by updatedAt desc
-      store.switchTo(mostRecent.id);
-      const msgs = store.getCurrentMessages();
-      if (msgs.length > 0) {
-        chat.setMessages(msgs);
-      }
-    } else {
-      // No conversations yet — create one
-      store.createNew(c.id);
-    }
-  });
+  // On initial corpus mount: load most recent conversation for this corpus
+  createEffect(
+    on(
+      () => corpus(),
+      (c) => {
+        if (!c) return;
+        const convs = store.conversations().filter((conv) => conv.corpusId === c.id);
+        if (convs.length > 0) {
+          store.switchTo(convs[0].id);
+          const msgs = store.getCurrentMessages();
+          if (msgs.length > 0) chat.setMessages(msgs);
+        } else {
+          store.createNew(c.id);
+        }
+      },
+    ),
+  );
 
-  // Save messages when navigating away
-  const saveCurrent = () => {
-    const msgs = chat.messages();
-    if (msgs.length > 0) {
-      const title = deriveTitle(msgs);
-      store.saveCurrentMessages(msgs);
-      if (title) {
-        store.updateCurrentTitle(title);
+  // Register the switch handler. This runs synchronously from sidebar clicks.
+  createEffect(() => {
+    setConversationSwitcher((id: string) => {
+      if (id === store.currentId()) return;
+      const currentMsgs = chat.messages();
+      if (currentMsgs.length > 0) {
+        store.saveCurrentMessages(currentMsgs);
       }
-    }
-  };
+      if (chat.isLoading()) chat.stop();
+      chat.clear();
+      store.switchTo(id);
+      const msgs = store.getCurrentMessages();
+      chat.setMessages(msgs);
+    });
+    return () => setConversationSwitcher(null);
+  });
 
   const handleSend = (text: string) => {
     const msgs = chat.messages();
@@ -103,14 +117,3 @@ export const CorpusChatPage: Component = () => {
     </>
   );
 };
-
-function deriveTitle(msgs: any[]): string | null {
-  const firstUser = msgs.find((m: any) => m.role === "user");
-  if (!firstUser) return null;
-  const text = firstUser.parts
-    .filter((p: any) => p.type === "text")
-    .map((p: any) => p.content)
-    .join(" ");
-  if (text.length === 0) return null;
-  return generateTitle(text);
-}

@@ -6,6 +6,8 @@ import { createThemeSignal } from "@/theme/theme";
 import { Header } from "./Header";
 import { Sidebar } from "@/conversations/Sidebar";
 
+import { triggerConversationSwitch } from "@/corpora/CorpusChatPage";
+
 export const RootLayout: Component<RouteSectionProps> = (props) => {
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
   const [theme, toggleTheme] = createThemeSignal();
@@ -13,7 +15,6 @@ export const RootLayout: Component<RouteSectionProps> = (props) => {
   const corpora = useCorpora();
   const location = useLocation();
 
-  // Derive active corpus ID from the URL path
   const activeCorpusId = () => {
     const path = location.pathname;
     if (!path.startsWith("/corpora/")) return null;
@@ -42,7 +43,7 @@ export const RootLayout: Component<RouteSectionProps> = (props) => {
             conversations={store.conversations()}
             currentId={store.currentId()}
             activeCorpusId={activeCorpusId()!}
-            onSelect={(id) => store.switchTo(id)}
+            onSelect={(id) => { store.switchTo(id); triggerConversationSwitch(id); }}
             onNew={() => store.createNew(activeCorpusId()!)}
             onDelete={(id) => {
               store.switchTo(id);
