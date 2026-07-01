@@ -52,7 +52,7 @@ export const RootLayout: Component<RouteSectionProps> = (props) => {
           />
         )}
 
-        <main class="flex-1 flex flex-col overflow-hidden">
+        <main class="flex-1 flex flex-col overflow-hidden bg-(--bg-primary)">
           {props.children}
         </main>
       </div>

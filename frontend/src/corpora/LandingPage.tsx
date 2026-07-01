@@ -37,7 +37,7 @@ export const LandingPage: Component = () => {
               {(corpus) => (
                 <A
                   href={`/corpora/${corpus.slug}`}
-                  class="block p-5 rounded-lg border border-(--border) bg-(--bg-secondary) hover:border-(--accent) hover:shadow-md transition-all no-underline"
+                  class="block p-5 rounded-lg border border-(--border) bg-(--hover) hover:border-(--accent) hover:shadow-md transition-all no-underline"
                 >
                   <h3 class="text-base font-semibold text-(--text-primary) mb-1">
                     {corpus.name}
