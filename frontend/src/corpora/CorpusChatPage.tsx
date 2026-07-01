@@ -1,9 +1,10 @@
-import { Show, For, createEffect, on, untrack, type Component } from "solid-js";
+import { Show, For, createEffect, on, untrack, createSignal, type Component } from "solid-js";
 import { A, useParams } from "@solidjs/router";
 import { useCorpora } from "./CorporaProvider";
 import { useConversationStore } from "@/conversations/ConversationStoreProvider";
 import { ChatView } from "@/chat/ChatView";
 import { useChat, fetchServerSentEvents } from "@tanstack/ai-solid";
+import type { StreamChunk } from "@tanstack/ai";
 import { resilientFetch } from "@/chat/resilientFetch";
 import { generateTitle } from "@/conversations/title";
 
@@ -13,6 +14,12 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
   const store = useConversationStore();
   const sseUrl = () => `/api/chat/${props.corpusSlug}`;
 
+  // Agent name tracking — captured from TEXT_MESSAGE_START stream chunks
+  const [agentNameMap, setAgentNameMap] = createSignal<Record<string, string>>(
+    store.getCurrentAgentNames(),
+  );
+  // Set of message IDs that have received TEXT_MESSAGE_END
+  const [endedMessageIds, setEndedMessageIds] = createSignal<Set<string>>(new Set());
 
   const chat = useChat({
     id: `chat-${props.convId}`,
@@ -22,17 +29,28 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
         fetchClient: resilientFetch,
       });
     },
+    onChunk: (chunk: StreamChunk) => {
+      if (
+        chunk.type === "TEXT_MESSAGE_START" &&
+        "name" in chunk &&
+        typeof (chunk as any).name === "string"
+      ) {
+        const name = (chunk as any).name as string;
+        setAgentNameMap((prev) => ({ ...prev, [chunk.messageId]: name }));
+      }
+      if (chunk.type === "TEXT_MESSAGE_END") {
+        setEndedMessageIds((prev) => new Set(prev).add(chunk.messageId));
+      }
+    },
   });
 
-  // Persist messages when they change AFTER initial mount
-  // (initial messages come from the store already persisted; re-saving
-  // bumps updatedAt and re-sorts the sidebar for no reason)
+  // Persist messages + agent names when they change AFTER initial mount
   let initial = true;
   createEffect(() => {
     const msgs = chat.messages();
     if (initial) { initial = false; return; }
     if (msgs.length > 0) {
-      untrack(() => store.saveCurrentMessages(msgs));
+      untrack(() => store.saveCurrentMessages(msgs, agentNameMap()));
     }
   });
 
@@ -59,8 +77,9 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
       isLoading={chat.isLoading()}
       error={chat.error()?.message ?? null}
       storageError={store.storageError()}
-      agentNameMap={{}}
+      agentNameMap={agentNameMap()}
       onSend={handleSend}
+      endedMessageIds={endedMessageIds()}
       onStop={() => chat.stop()}
       onDismissStorageError={() => store.setStorageError(null)}
       focusTick={0}
