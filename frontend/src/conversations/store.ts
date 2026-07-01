@@ -118,13 +118,47 @@ export function createConversationStore(opts?: {
   let loaded = p.loadAll();
   let lastOpened = p.loadLastOpened();
 
-  // Migrate legacy conversations: assign defaultCorpusId to any without one
+  // Record whether we've migrated anything so we can persist once at the end
   let migrated = false;
   loaded = loaded.map((c) => {
+    let changed = false;
+
+    // Legacy: assign defaultCorpusId to conversations without one
     if (!c.corpusId) {
-      migrated = true;
-      return { ...c, corpusId: defaultCorpusId };
+      c = { ...c, corpusId: defaultCorpusId };
+      changed = true;
     }
+
+    // Legacy: fix conversations whose updatedAt doesn't match their newest message.
+    // The old conversation-switching bug was re-saving every conversation on
+    // every mount with Date.now(), corrupting all updatedAt timestamps.
+    let fixedUpdatedAt: number | undefined;
+    if (c.messages.length > 0) {
+      // Derive from the last message's createdAt (or updatedAt from the last assistant message)
+      const lastMsg = c.messages[c.messages.length - 1];
+      const msgTime = lastMsg.createdAt instanceof Date
+        ? lastMsg.createdAt.getTime()
+        : typeof lastMsg.createdAt === 'number'
+          ? lastMsg.createdAt
+          : typeof lastMsg.createdAt === 'string'
+            ? new Date(lastMsg.createdAt).getTime()
+            : undefined;
+      if (msgTime !== undefined && Math.abs(msgTime - c.updatedAt) > 5000) {
+        fixedUpdatedAt = msgTime;
+      }
+    } else {
+      // Empty conversation — updatedAt should equal createdAt
+      if (c.updatedAt !== c.createdAt && c.createdAt > 0) {
+        fixedUpdatedAt = c.createdAt;
+      }
+    }
+
+    if (fixedUpdatedAt !== undefined) {
+      c = { ...c, updatedAt: fixedUpdatedAt };
+      changed = true;
+    }
+
+    if (changed) migrated = true;
     return c;
   });
   // Persist any migrations
@@ -190,6 +224,12 @@ export function createConversationStore(opts?: {
       if (existing) {
         setCurrentId(existing.id);
         p.saveLastOpened(existing.id);
+        // Bump updatedAt so the reused entry sorts to the top
+        const bumped: Conversation = { ...existing, updatedAt: Date.now() };
+        p.save(bumped);
+        setConversations(
+          conversations().map((c) => (c.id === existing.id ? bumped : c)),
+        );
         return existing.id;
       }
 
