@@ -14,7 +14,7 @@
     "solidjs": {
       "command": "bun",
       "args": [
-        "/home/morket/ops/skills/solidJSkills/mcp-server/src/index.js"
+        "/home/morket/ops/tools/repos/solidJSkills/mcp-server/src/index.js"
       ],
       "lifecycle": "lazy",
       "directTools": true
