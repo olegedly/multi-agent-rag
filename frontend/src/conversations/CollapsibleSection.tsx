@@ -1,12 +1,4 @@
-import {
-  createSignal,
-  createEffect,
-  onCleanup,
-  on,
-  useContext,
-  type JSX,
-} from "solid-js";
-import { StopCollapseContext } from "./ChatView";
+import { type JSX } from "solid-js";
 
 export interface CollapsibleSectionProps {
   label: string;
@@ -15,113 +7,13 @@ export interface CollapsibleSectionProps {
   children: JSX.Element;
   expanded?: boolean;
   onToggle?: (expanded: boolean) => void;
-  /** Auto-collapse after this many ms when user hasn't interacted */
-  autoCollapseMs?: number;
-  /** Collapse immediately when this signal value changes to a non-zero value */
-  collapseOnTick?: number;
-  /**
-   * When this value changes, the auto-collapse timer resets.
-   * Used during streaming: pass the tool result content so the timer
-   * restarts each time a new chunk arrives.
-   */
-  resetTimerOn?: unknown;
-  /**
-   * When true, the stop-tick context (stream-end / Stop button) will
-   * NOT collapse this section.  Used by ToolResultPartRenderer which
-   * wants only the autoCollapseMs timer, not an immediate collapse.
-   */
-  disableStopCollapse?: boolean;
 }
 
 export function CollapsibleSection(props: CollapsibleSectionProps) {
-  const [expanded, setExpanded] = createSignal(props.expanded ?? true);
-  const stopTick = useContext(StopCollapseContext);
-  let userInteracted = false;
-  let timerRef: number | undefined;
-
-  // Auto-collapse timer — resets whenever children content changes,
-  // so streaming updates extend the visible window via the
-  // resetTimerOn prop (passed from the parent on content update).
-  const setupAutoCollapse = () => {
-    if (timerRef !== undefined) {
-      clearTimeout(timerRef);
-      timerRef = undefined;
-    }
-    if (props.autoCollapseMs && expanded() && !userInteracted) {
-      timerRef = window.setTimeout(() => {
-        if (!userInteracted) {
-          setExpanded(false);
-          props.onToggle?.(false);
-        }
-      }, props.autoCollapseMs);
-    }
-  };
-
-  // Start the timer on mount and reset it whenever streaming content updates.
-  // The resetTimerOn prop changes each time new content arrives, causing
-  // setupAutoCollapse to clear the old timer and start a fresh one.
-  createEffect(
-    on(
-      () => props.resetTimerOn,
-      () => {
-        setupAutoCollapse();
-      },
-      { defer: false },
-    ),
-  );
-
-  onCleanup(() => {
-    if (timerRef !== undefined) {
-      clearTimeout(timerRef);
-      timerRef = undefined;
-    }
-  });
-
-  // Collapse when tick changes to >0 (deferred so initial tick doesn't collapse on mount)
-  createEffect(
-    on(
-      () => props.collapseOnTick ?? 0,
-      (tick) => {
-        if (tick > 0 && !userInteracted && expanded()) {
-          if (timerRef !== undefined) {
-            clearTimeout(timerRef);
-            timerRef = undefined;
-          }
-          setExpanded(false);
-          props.onToggle?.(false);
-        }
-      },
-      { defer: true },
-    ),
-  );
-
-  // Collapse when stopTick ticks (stream end or Stop), unless
-  // this section has opted out (e.g. tool results use autoCollapseMs).
-  createEffect(
-    on(stopTick, (tick) => {
-      if (props.disableStopCollapse) return;
-      if (tick > 0 && !userInteracted && expanded()) {
-        if (timerRef !== undefined) {
-          clearTimeout(timerRef);
-          timerRef = undefined;
-        }
-        setExpanded(false);
-        props.onToggle?.(false);
-      }
-    }),
-  );
+  const expanded = () => props.expanded ?? true;
 
   const toggle = () => {
-    if (!userInteracted) {
-      userInteracted = true;
-      if (timerRef !== undefined) {
-        clearTimeout(timerRef);
-        timerRef = undefined;
-      }
-    }
-    const next = !expanded();
-    setExpanded(next);
-    props.onToggle?.(next);
+    props.onToggle?.(!expanded());
   };
 
   return (
