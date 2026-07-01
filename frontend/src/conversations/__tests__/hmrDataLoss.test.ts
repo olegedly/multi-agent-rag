@@ -1,22 +1,34 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createRoot } from "solid-js";
 import type { UIMessage } from "@tanstack/ai-client";
+import type { Conversation, ConversationPersistence } from "../store";
 import { ConversationStore, createConversationStore } from "../store";
 
-const LS_LAST_OPENED = "conversation:lastOpened";
+// ── FakePersistence: Map-backed, no real localStorage ──
 
-function getConvInLS(id: string): { id: string; messages: UIMessage[] } | null {
-  const raw = localStorage.getItem(`conversation:${id}`);
-  return raw ? JSON.parse(raw) : null;
-}
+class FakePersistence implements ConversationPersistence {
+  private store = new Map<string, Conversation>();
+  private lastOpened: string | undefined;
 
-function getConvCount(): number {
-  let count = 0;
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key?.startsWith("conversation:") && key !== LS_LAST_OPENED) count++;
+  loadAll(): Conversation[] {
+    return Array.from(this.store.values());
   }
-  return count;
+
+  save(conv: Conversation): void {
+    this.store.set(conv.id, { ...conv });
+  }
+
+  remove(id: string): void {
+    this.store.delete(id);
+  }
+
+  loadLastOpened(): string | undefined {
+    return this.lastOpened;
+  }
+
+  saveLastOpened(id: string): void {
+    this.lastOpened = id;
+  }
 }
 
 function makeMessages(count: number): UIMessage[] {
@@ -28,13 +40,14 @@ function makeMessages(count: number): UIMessage[] {
 }
 
 describe("HMR / beforeunload data loss", () => {
+  let persistence: FakePersistence;
   let store: ConversationStore;
   let dispose: (() => void) | undefined;
 
   beforeEach(() => {
-    localStorage.clear();
+    persistence = new FakePersistence();
     dispose = createRoot((rootDispose) => {
-      store = createConversationStore();
+      store = createConversationStore({ persistence });
       return rootDispose;
     });
   });
@@ -45,14 +58,14 @@ describe("HMR / beforeunload data loss", () => {
 
   // ── Survival tests ──
 
-  it("survives unmount+remount: data intact in localStorage after full cycle", () => {
+  it("survives unmount+remount: data intact after full cycle", () => {
     store.saveCurrentMessages(makeMessages(3));
     const convId = store.currentId();
     store.updateCurrentTitle("My Chat");
     dispose?.();
     createRoot((rd) => {
-      const store2 = createConversationStore();
-      expect(getConvCount()).toBe(1);
+      const store2 = createConversationStore({ persistence });
+      expect(persistence.loadAll().length).toBe(1);
       expect(store2.currentId()).toBe(convId);
       expect(store2.getCurrentMessages().length).toBe(3);
       expect(
@@ -70,10 +83,12 @@ describe("HMR / beforeunload data loss", () => {
     store.saveCurrentMessages(makeMessages(4));
     dispose?.();
     createRoot((rd) => {
-      const store2 = createConversationStore();
-      expect(getConvCount()).toBe(2);
-      expect(getConvInLS(conv1Id)!.messages.length).toBe(2);
-      expect(getConvInLS(conv2Id)!.messages.length).toBe(4);
+      const store2 = createConversationStore({ persistence });
+      expect(persistence.loadAll().length).toBe(2);
+      const conv1 = persistence.loadAll().find((c) => c.id === conv1Id)!;
+      const conv2 = persistence.loadAll().find((c) => c.id === conv2Id)!;
+      expect(conv1.messages.length).toBe(2);
+      expect(conv2.messages.length).toBe(4);
       rd();
     });
   });
@@ -85,11 +100,15 @@ describe("HMR / beforeunload data loss", () => {
     const convB = store.currentId();
     store.saveCurrentMessages(makeMessages(2));
     store.switchTo(convA);
-    expect(getConvInLS(convA)!.messages.length).toBe(3);
-    expect(getConvInLS(convB)!.messages.length).toBe(2);
+    const convA_data = persistence.loadAll().find((c) => c.id === convA)!;
+    const convB_data = persistence.loadAll().find((c) => c.id === convB)!;
+    expect(convA_data.messages.length).toBe(3);
+    expect(convB_data.messages.length).toBe(2);
     store.switchTo(convB);
-    expect(getConvInLS(convA)!.messages.length).toBe(3);
-    expect(getConvInLS(convB)!.messages.length).toBe(2);
+    const convA_again = persistence.loadAll().find((c) => c.id === convA)!;
+    const convB_again = persistence.loadAll().find((c) => c.id === convB)!;
+    expect(convA_again.messages.length).toBe(3);
+    expect(convB_again.messages.length).toBe(2);
   });
 
   // ── Guard tests: saveCurrentMessages([]) behavior ──
@@ -101,13 +120,12 @@ describe("HMR / beforeunload data loss", () => {
     // Any code path that calls saveCurrentMessages([]) should be a no-op
     store.saveCurrentMessages([]);
 
-    const stored = getConvInLS(convId)!;
+    const stored = persistence.loadAll().find((c) => c.id === convId)!;
     expect(stored.messages.length).toBeGreaterThan(0);
     expect((stored.messages[0].parts[0] as any).content).toBe("Message 0");
   });
 
   it("guard: saveCurrentMessages([]) may overwrite an empty/never-saved conversation", () => {
-    const convId = store.currentId();
     // conv is brand new and empty — saving [] is fine
     store.saveCurrentMessages([]);
     expect(store.getCurrentMessages()).toEqual([]);
@@ -125,15 +143,16 @@ describe("HMR / beforeunload data loss", () => {
       store.saveCurrentMessages(emptyMsgs);
     }
 
-    expect(getConvInLS(convId)!.messages.length).toBe(3);
+    const stored = persistence.loadAll().find((c) => c.id === convId)!;
+    expect(stored.messages.length).toBe(3);
   });
 
   it("beforeunload: non-empty msgs save correctly", () => {
     store.saveCurrentMessages(makeMessages(3));
     const convId = store.currentId();
 
-    // Simulate saveCurrent with non-empty messages
     store.saveCurrentMessages(makeMessages(3));
-    expect(getConvInLS(convId)!.messages.length).toBe(3);
+    const stored = persistence.loadAll().find((c) => c.id === convId)!;
+    expect(stored.messages.length).toBe(3);
   });
 });
