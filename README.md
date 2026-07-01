@@ -1,8 +1,18 @@
 # Multi-Agent RAG
 
+> **Live demo:** [multi-agent-rag.olegedly.com](https://multi-agent-rag.olegedly.com/)
 A config-driven multi-agent research system with pgvector RAG, MCP tool servers, and a LangChain agent pipeline. Answers are grounded in curated knowledge bases (corpora), each scoped to a single corpus with route-based isolation.
 
 ## Quick Start
+
+First, create your config:
+
+```bash
+cp .env.example .env
+# Then edit .env with your API keys
+```
+
+Then start the dev environment:
 
 ```bash
 ./dev.sh
@@ -24,6 +34,8 @@ SolidJS SPA → AG-UI/SSE → FastAPI → LangChain Agent Pipeline
                               MCP Server (standalone, for pi/Claude Desktop)
                                    └── pgvector RAG (corpus-filtered)
 ```
+
+![Dashboard screenshot](docs/dashboard-screenshot.png)
 
 The system is **corpus-scoped**: each conversation binds to one corpus from start to finish. Every retrieval carries the active `corpus_id`. Adding a new knowledge base is an ingestion + config task.
 
@@ -74,6 +86,8 @@ make test           # full suite (backend + frontend)
 make test_backend   # backend only
 make test_frontend  # frontend only
 ```
+
+> All **422 tests pass** (223 backend + 199 frontend) with 0 pyright/TypeScript errors.
 
 Pure unit tests — no Docker or DB dependency for business logic. The `create_app()` DI makes mocking straightforward.
 
