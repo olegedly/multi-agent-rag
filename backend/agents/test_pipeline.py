@@ -4,7 +4,7 @@ from typing import Any, cast
 
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 
-from backend.agents.pipeline import _convert_dict_messages
+from backend.agents.graph_orchestrator import _convert_dict_messages
 
 
 def _as_lc(msgs: list[dict]) -> list[BaseMessage]:

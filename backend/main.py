@@ -15,7 +15,7 @@ from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 
-from backend.agents.pipeline import run_pipeline
+from backend.agents.graph_orchestrator import run_orchestrator
 from backend.config import Settings, get_settings
 from backend.corpus_config import CorporaConfig
 from backend.middleware import BudgetStore, ChatGuard, JsonFileBudget
@@ -100,7 +100,7 @@ def create_app(
 
         async def _stream():
             try:
-                async for event in run_pipeline(
+                async for event in run_orchestrator(
                     messages,
                     slug,
                     corpora_config=corpora_config,

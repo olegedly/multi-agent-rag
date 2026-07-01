@@ -113,7 +113,7 @@ class TestBudgetMiddleware:
     @pytest.fixture
     def client(self, tmp_path, monkeypatch) -> Generator[TestClient, None, None]:
         # Stub the pipeline so it doesn't actually call an LLM
-        monkeypatch.setattr("backend.main.run_pipeline", _noop_pipeline)
+        monkeypatch.setattr("backend.main.run_orchestrator", _noop_pipeline)
         app = create_app(
             settings=Settings(
                 demo_daily_budget_tokens=50,
@@ -150,7 +150,7 @@ class TestBudgetDevBypass:
         budget = JsonFileBudget(path=str(tmp_path / "budget.json"), daily_limit=50)
         budget.add_tokens(100)
 
-        monkeypatch.setattr("backend.main.run_pipeline", _noop_pipeline)
+        monkeypatch.setattr("backend.main.run_orchestrator", _noop_pipeline)
 
         app = create_app(
             settings=Settings(
@@ -173,7 +173,7 @@ class TestBudgetDevBypass:
         assert ChatGuard in mids
 
     def test_query_still_active_when_budget_disabled(self, tmp_path, monkeypatch) -> None:
-        monkeypatch.setattr("backend.main.run_pipeline", _noop_pipeline)
+        monkeypatch.setattr("backend.main.run_orchestrator", _noop_pipeline)
 
         app = create_app(
             settings=Settings(demo_disable_budget=True, demo_max_query_length=10, demo_budget_file=str(tmp_path / "budget.json")),
@@ -192,7 +192,7 @@ class TestQueryValidation:
 
     @pytest.fixture
     def client(self, tmp_path, monkeypatch) -> Generator[TestClient, None, None]:
-        monkeypatch.setattr("backend.main.run_pipeline", _noop_pipeline)
+        monkeypatch.setattr("backend.main.run_orchestrator", _noop_pipeline)
         app = create_app(
             settings=Settings(
                 demo_max_query_length=10,
