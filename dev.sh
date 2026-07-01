@@ -4,7 +4,7 @@ set -e
 cleanup() {
   echo ""
   echo "Shutting down..."
-  docker compose -f docker-compose.base.yml -f docker-compose.dev-override.yml down
+  docker compose down
   [ -n "$BACKEND_PID" ] && kill "$BACKEND_PID" 2>/dev/null
   [ -n "$PGWEB_PID" ] && kill "$PGWEB_PID" 2>/dev/null
   [ -n "$MCP_PID" ] && kill "$MCP_PID" 2>/dev/null
@@ -18,10 +18,10 @@ trap cleanup SIGINT SIGTERM
 
 # ── Database (Docker) ──────────────────────────────────────
 echo "Starting PostgreSQL (pgvector)..."
-docker compose -f docker-compose.base.yml -f docker-compose.dev-override.yml up -d db
+docker compose up -d
 
 echo "Waiting for PostgreSQL to be healthy..."
-until docker compose -f docker-compose.base.yml -f docker-compose.dev-override.yml exec db pg_isready -U "$POSTGRES_USER" --quiet 2>/dev/null; do
+until docker compose exec db pg_isready -U "$POSTGRES_USER" --quiet 2>/dev/null; do
   sleep 1
 done
 echo "PostgreSQL is ready."

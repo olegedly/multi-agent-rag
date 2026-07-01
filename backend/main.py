@@ -19,6 +19,7 @@ from backend.agents.graph_orchestrator import run_orchestrator
 from backend.config import Settings, get_settings
 from backend.corpus_config import CorporaConfig
 from backend.middleware import ChatGuard
+from backend.db import migrate_db
 
 
 def create_app(
@@ -48,6 +49,13 @@ def create_app(
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # Auto-migrate DB schema on startup (idempotent — no-op if tables exist).
+        # Skip when no DB credentials are configured (e.g. in tests).
+        if settings.postgres_user and settings.postgres_password:
+            try:
+                await migrate_db(settings.database_url)
+            except Exception:
+                pass  # Non-fatal — RAG tools will surface connection errors at query time.
         yield
 
     app = FastAPI(title=settings.app_name, lifespan=_lifespan)
