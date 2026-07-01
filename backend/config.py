@@ -1,9 +1,13 @@
 from functools import lru_cache
 
+from typing import Any
+
+from pydantic import PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    _budget_store: object | None = PrivateAttr(default=None)
     app_name: str = "multi-agent-rag"
 
     # Postgres / RAG
@@ -46,6 +50,24 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         return f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+
+    @property
+    def budget_store(self) -> Any | None:
+        """Return a BudgetStore instance, or None if budget is disabled.
+
+        Consumers (ChatGuard, TokenBudgetCallback) share this single
+        instance via the Settings object.
+        """
+        if self.demo_disable_budget:
+            return None
+        if self._budget_store is None:
+            from backend.middleware import JsonFileBudget
+
+            self._budget_store = JsonFileBudget(
+                path=self.demo_budget_file,
+                daily_limit=self.demo_daily_budget_tokens,
+            )
+        return self._budget_store
 
 
 @lru_cache
