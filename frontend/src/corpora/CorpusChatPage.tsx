@@ -1,4 +1,4 @@
-import { Show, createEffect, createSignal, on, type Component } from "solid-js";
+import { Show, For, createEffect, on, onCleanup, untrack, type Component } from "solid-js";
 import { A, useParams } from "@solidjs/router";
 import { useCorpora } from "./CorporaProvider";
 import { useConversationStore } from "@/conversations/ConversationStoreProvider";
@@ -7,10 +7,15 @@ import { useChat, fetchServerSentEvents } from "@tanstack/ai-solid";
 import { resilientFetch } from "@/chat/resilientFetch";
 import { generateTitle } from "@/conversations/title";
 
-/** Chat session — mounts fresh per conversation via toggle+Show. */
+const D = "[conv]";
+
+/** Chat session — mounted per conversation via For's keyed lifecycle. */
 const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (props) => {
   const store = useConversationStore();
   const sseUrl = () => `/api/chat/${props.corpusSlug}`;
+
+  console.log(D, "MOUNT convId=", props.convId, "initMsgs=", store.getCurrentMessages().length);
+  onCleanup(() => console.log(D, "CLEANUP convId=", props.convId));
 
   const chat = useChat({
     id: `chat-${props.convId}`,
@@ -22,12 +27,20 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
     },
   });
 
+  // Log what the chat hook reports
+  createEffect(() => {
+    console.log(D, "msgs.len=", chat.messages().length, "isLoading=", chat.isLoading(), "convId=", props.convId);
+  });
+
+  // Persist messages on every change (streamed updates, new messages)
   createEffect(() => {
     const msgs = chat.messages();
     if (msgs.length > 0) {
-      store.saveCurrentMessages(msgs);
-      const title = deriveTitle(msgs);
-      if (title) store.updateCurrentTitle(title);
+      untrack(() => {
+        store.saveCurrentMessages(msgs);
+        const title = deriveTitle(msgs);
+        if (title) store.updateCurrentTitle(title);
+      });
     }
   });
 
@@ -61,10 +74,6 @@ export const CorpusChatPage: Component = () => {
   const isUnknown = () => !corpora.loading() && !corpus();
   const isLoading = () => corpora.loading();
 
-  // Toggle this off/on to force ConversationChat unmount/remount
-  const [visible, setVisible] = createSignal(false);
-  let initDone = false;
-
   // On initial corpus mount: load most recent conversation
   createEffect(
     on(
@@ -74,19 +83,11 @@ export const CorpusChatPage: Component = () => {
         const convs = store.conversations().filter((conv) => conv.corpusId === c.id);
         if (convs.length > 0) store.switchTo(convs[0].id);
         else store.createNew(c.id);
-        setVisible(true);
       },
     ),
   );
 
-  // When sidebar selects a different conversation: unmount + remount
-  createEffect(() => {
-    const id = store.currentId();
-    if (!id) return;
-    if (!initDone) { initDone = true; return; }
-    setVisible(false);
-    setTimeout(() => setVisible(true), 0);
-  });
+  console.log(D, "render currentId=", store.currentId());
 
   return (
     <>
@@ -99,8 +100,14 @@ export const CorpusChatPage: Component = () => {
           <A href="/" class="px-4 py-2 text-sm bg-(--accent) text-white rounded hover:bg-(--accent-hover) transition-colors no-underline">Browse available knowledge bases</A>
         </div>
       </Show>
-      <Show when={visible() && corpus() && !isLoading() && store.currentId()}>
-        <ConversationChat convId={store.currentId()} corpusSlug={params.slug} />
+      <Show when={corpus() && !isLoading()}>
+        {/* For keys by identity — when currentId() changes it unmounts old
+            ConversationChat and mounts a fresh one with initialMessages. */}
+        <For each={store.currentId() ? [store.currentId()] : []}>
+          {(convId) => (
+            <ConversationChat convId={convId} corpusSlug={params.slug} />
+          )}
+        </For>
       </Show>
     </>
   );
