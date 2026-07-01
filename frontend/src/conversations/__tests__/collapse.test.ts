@@ -4,7 +4,7 @@ import { createCollapseState } from "../collapse";
 
 /** Helper: flush Solid's reactive microtasks so effects run. */
 async function flush(): Promise<void> {
-  await new Promise((r) => queueMicrotask(r));
+  await new Promise<void>((r) => queueMicrotask(() => r()));
   await new Promise((r) => setTimeout(r, 0));
 }
 

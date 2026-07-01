@@ -1,20 +1,14 @@
 import { createSignal } from "solid-js";
+import { createThemeSignal } from "./theme";
 import { useChatStore } from "./conversations/useChatStore";
 import { Sidebar } from "./conversations/Sidebar";
 import { ChatView } from "./conversations/ChatView";
 
 const App = () => {
   const [sidebarOpen, setSidebarOpen] = createSignal(false);
-  const [theme, setTheme] = createSignal(getInitialTheme());
+  const [theme, toggleTheme] = createThemeSignal();
 
   const chat = useChatStore();
-
-  const toggleTheme = () => {
-    const next = theme() === "dark" ? "light" : "dark";
-    setTheme(next);
-    document.documentElement.setAttribute("data-theme", next);
-    localStorage.setItem("theme", next);
-  };
 
   return (
     <div class="h-dvh flex flex-col">
@@ -110,18 +104,5 @@ const App = () => {
   );
 };
 
-function getInitialTheme(): "light" | "dark" {
-  const stored = localStorage.getItem("theme");
-  if (stored === "light" || stored === "dark") {
-    return stored;
-  }
-  if (
-    window.matchMedia &&
-    window.matchMedia("(prefers-color-scheme: light)").matches
-  ) {
-    return "light";
-  }
-  return "dark";
-}
 
 export default App;
