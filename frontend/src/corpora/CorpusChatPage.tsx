@@ -4,7 +4,7 @@ import { useCorpora } from "./CorporaProvider";
 import { useConversationStore } from "@/conversations/ConversationStoreProvider";
 import { ChatView } from "@/chat/ChatView";
 import { useChat, fetchServerSentEvents } from "@tanstack/ai-solid";
-import type { StreamChunk } from "@tanstack/ai";
+import type { StreamChunk } from "@tanstack/ai/client";
 import { resilientFetch } from "@/chat/resilientFetch";
 import { generateTitle } from "@/conversations/title";
 
@@ -92,7 +92,7 @@ export const CorpusChatPage: Component = () => {
   const corpora = useCorpora();
   const store = useConversationStore();
 
-  const corpus = () => corpora.resolveSlug(params.slug);
+  const corpus = () => (params.slug ? corpora.resolveSlug(params.slug) : undefined);
   const isUnknown = () => !corpora.loading() && !corpus();
   const isLoading = () => corpora.loading();
 
@@ -126,7 +126,7 @@ export const CorpusChatPage: Component = () => {
             ConversationChat and mounts a fresh one with initialMessages. */}
         <For each={store.currentId() ? [store.currentId()] : []}>
           {(convId) => (
-            <ConversationChat convId={convId} corpusSlug={params.slug} />
+            <ConversationChat convId={convId} corpusSlug={params.slug!} />
           )}
         </For>
       </Show>

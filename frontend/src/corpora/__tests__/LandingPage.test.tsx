@@ -9,13 +9,13 @@ const FAKE_CORPORA = [
 ];
 
 function mockFetch(data: unknown) {
-  return vi.fn().mockResolvedValue({
+  return vi.fn<typeof globalThis.fetch>().mockResolvedValue({
     ok: true,
     json: () => Promise.resolve(data),
-  });
+  } as Response);
 }
 
-function renderLanding(fetch: ReturnType<typeof vi.fn>) {
+function renderLanding(fetch: typeof globalThis.fetch) {
   return render(() => (
     <CorporaProvider fetch={fetch}>
       <Router root={(props) => props.children}>
@@ -38,12 +38,12 @@ describe("LandingPage", () => {
   it("shows loading state while fetching", () => {
     // A fetch that never resolves
     const fetch = vi.fn().mockReturnValue(new Promise(() => {}));
-    renderLanding(fetch);
+    renderLanding(fetch as typeof globalThis.fetch);
     expect(screen.getByText("Loading knowledge bases...")).toBeTruthy();
   });
 
   it("shows error state when fetch fails", async () => {
-    const fetch = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue({ ok: false, status: 500 } as Response);
     renderLanding(fetch);
     await vi.waitFor(() => {
       expect(screen.getByText("Failed to load knowledge bases")).toBeTruthy();

@@ -11,13 +11,13 @@ const FAKE_CORPORA = [
 ];
 
 function mockFetch(data: unknown) {
-  return vi.fn().mockResolvedValue({
+  return vi.fn<typeof globalThis.fetch>().mockResolvedValue({
     ok: true,
     json: () => Promise.resolve(data),
-  });
+  } as Response);
 }
 
-function renderCorpusPage(slug: string, fetch: ReturnType<typeof vi.fn>) {
+function renderCorpusPage(slug: string, fetch: typeof globalThis.fetch) {
   const history = createMemoryHistory();
   history.set({ value: `/corpora/${slug}`, replace: true });
 
@@ -38,7 +38,7 @@ describe("CorpusChatPage", () => {
   });
 
   it("shows loading while corpora are being fetched", () => {
-    const fetch = vi.fn().mockReturnValue(new Promise(() => {}));
+    const fetch = vi.fn<typeof globalThis.fetch>().mockReturnValue(new Promise(() => {}));
     renderCorpusPage("eu-ai-act", fetch);
     expect(screen.getByText("Loading...")).toBeTruthy();
   });
