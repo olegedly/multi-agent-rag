@@ -1,4 +1,4 @@
-import { For, Show, createSignal, createMemo } from "solid-js";
+import { For, Show, createSignal, createMemo, createEffect, on } from "solid-js";
 import type { Conversation } from "./store";
 
 interface SidebarProps {
@@ -14,6 +14,19 @@ interface SidebarProps {
 
 export function Sidebar(props: SidebarProps) {
   const [confirmingId, setConfirmingId] = createSignal<string | null>(null);
+  let listRef: HTMLDivElement | undefined;
+
+  // Auto-scroll to top when a new conversation is created (sorted to top)
+  let prevLen = 0;
+  createEffect(on(
+    () => props.conversations.length,
+    (len) => {
+      if (len > prevLen && listRef?.scrollTo) {
+        listRef.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      prevLen = len;
+    },
+  ));
 
   // Filter conversations to only those belonging to the active corpus
   const filtered = createMemo(() =>
@@ -67,7 +80,7 @@ export function Sidebar(props: SidebarProps) {
       </div>
 
       {/* List */}
-      <div class="flex-1 overflow-y-auto p-2 space-y-1">
+      <div ref={listRef} class="flex-1 overflow-y-auto p-2 space-y-1">
         <Show
           when={enriched().length > 0}
           fallback={

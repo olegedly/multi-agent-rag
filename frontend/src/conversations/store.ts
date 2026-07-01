@@ -228,13 +228,17 @@ export function createConversationStore(opts?: {
         const bumped: Conversation = { ...existing, updatedAt: Date.now() };
         p.save(bumped);
         setConversations(
-          conversations().map((c) => (c.id === existing.id ? bumped : c)),
+          sortedByUpdatedAt(
+            conversations().map((c) => (c.id === existing.id ? bumped : c)),
+          ),
         );
         return existing.id;
       }
 
       const conv = createConversation(targetCorpusId);
-      const convs = [...conversations(), conv];
+      // Prepend so the new conversation sorts first even when timestamps tie
+      // (stable sort preserves relative order for equal keys)
+      const convs = sortedByUpdatedAt([conv, ...conversations()]);
       p.save(conv);
       setCurrentId(conv.id);
       p.saveLastOpened(conv.id);
