@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createRoot } from "solid-js";
 import type { UIMessage } from "@tanstack/ai-client";
-import type { Conversation, ConversationPersistence } from "../store";
-import { ConversationStore, createConversationStore } from "../store";
+import type { Conversation, ConversationPersistence } from "@/conversations/store";
+import { ConversationStore, createConversationStore } from "@/conversations/store";
 
 // ── FakePersistence: Map-backed, no real localStorage ──
 

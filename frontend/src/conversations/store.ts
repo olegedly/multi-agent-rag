@@ -5,13 +5,15 @@ import type { UIMessage } from "@tanstack/ai-client";
 
 export interface Conversation {
   id: string;
+  corpusId: string;
   title: string;
   createdAt: number;
+  /** Timestamp of the most recent message or creation time if no messages yet. */
+  updatedAt: number;
   messages: UIMessage[];
   /** Persisted mapping of messageId → agent name, survives page reload. */
   agentNames?: Record<string, string>;
 }
-
 
 export interface ConversationPersistence {
   /** Load all persisted conversations. */
@@ -25,7 +27,6 @@ export interface ConversationPersistence {
   /** Persist the last opened conversation id. */
   saveLastOpened(id: string): void;
 }
-
 
 export const localStoragePersistence: ConversationPersistence = {
   loadAll(): Conversation[] {
@@ -80,12 +81,14 @@ function lsKey(id: string) {
   return `${LS_PREFIX}${id}`;
 }
 
-
-function createConversation(): Conversation {
+function createConversation(corpusId: string): Conversation {
+  const now = Date.now();
   return {
     id: crypto.randomUUID(),
+    corpusId,
     title: "New conversation",
-    createdAt: Date.now(),
+    createdAt: now,
+    updatedAt: now,
     messages: [],
     agentNames: {},
   };
@@ -97,7 +100,7 @@ export interface ConversationStore {
   currentConversation: () => Conversation | undefined;
   getCurrentMessages: () => UIMessage[];
   getCurrentAgentNames: () => Record<string, string>;
-  createNew: () => string;
+  createNew: (corpusId?: string) => string;
   switchTo: (id: string) => void;
   saveCurrentMessages: (messages: UIMessage[], agentNames?: Record<string, string>) => void;
   removeCurrent: () => void;
@@ -108,24 +111,40 @@ export interface ConversationStore {
 
 export function createConversationStore(opts?: {
   persistence?: ConversationPersistence;
+  defaultCorpusId?: string;
 }): ConversationStore {
   const p = opts?.persistence ?? localStoragePersistence;
+  const defaultCorpusId = opts?.defaultCorpusId ?? "";
   let loaded = p.loadAll();
   let lastOpened = p.loadLastOpened();
 
+  // Migrate legacy conversations: assign defaultCorpusId to any without one
+  let migrated = false;
+  loaded = loaded.map((c) => {
+    if (!c.corpusId) {
+      migrated = true;
+      return { ...c, corpusId: defaultCorpusId };
+    }
+    return c;
+  });
+  // Persist any migrations
+  if (migrated) {
+    loaded.forEach((c) => p.save(c));
+  }
+
   if (loaded.length === 0) {
-    const first = createConversation();
+    const first = createConversation(defaultCorpusId);
     loaded = [first];
     p.save(first);
     p.saveLastOpened(first.id);
     lastOpened = first.id;
   }
 
-  // Restore last opened conversation; if not found, use first
+  // Restore last opened conversation; if not found, use most recently updated
   const initialId =
     lastOpened && loaded.some((c) => c.id === lastOpened)
       ? lastOpened
-      : loaded[0].id;
+      : sortedByUpdatedAt(loaded)[0].id;
 
   const [conversations, setConversations] = createSignal<Conversation[]>(loaded);
   const [currentId, setCurrentId] = createSignal<string>(initialId);
@@ -135,10 +154,12 @@ export function createConversationStore(opts?: {
     conversations().find((c) => c.id === currentId())
   );
 
+  function sortedByUpdatedAt(convs: Conversation[]): Conversation[] {
+    return [...convs].sort((a, b) => b.updatedAt - a.updatedAt);
+  }
 
   function getConversationList(): Conversation[] {
-    // Return sorted newest first
-    return [...conversations()].sort((a, b) => b.createdAt - a.createdAt);
+    return sortedByUpdatedAt(conversations());
   }
 
   return {
@@ -156,12 +177,15 @@ export function createConversationStore(opts?: {
       return cur?.agentNames ?? {};
     },
 
-    createNew() {
-      // If there's already a fresh empty conversation (title "New conversation",
-      // no messages), switch to it instead of creating a duplicate. This
-      // prevents the "+ New" button from piling up empty conversations.
+    createNew(corpusId?: string) {
+      const targetCorpusId = corpusId ?? defaultCorpusId;
+
+      // De-duplication: only match empty conversations in the same corpus
       const existing = conversations().find(
-        (c) => c.title === "New conversation" && c.messages.length === 0,
+        (c) =>
+          c.corpusId === targetCorpusId &&
+          c.title === "New conversation" &&
+          c.messages.length === 0,
       );
       if (existing) {
         setCurrentId(existing.id);
@@ -169,7 +193,7 @@ export function createConversationStore(opts?: {
         return existing.id;
       }
 
-      const conv = createConversation();
+      const conv = createConversation(targetCorpusId);
       const convs = [...conversations(), conv];
       p.save(conv);
       setCurrentId(conv.id);
@@ -190,13 +214,12 @@ export function createConversationStore(opts?: {
       if (!cur) return;
 
       // Defense in depth: never overwrite non-empty localStorage data
-      // with an empty message array. This prevents any caller error
-      // (e.g., a stale beforeunload handler or HMR teardown race)
-      // from silently wiping a conversation's history.
+      // with an empty message array.
       if (messages.length === 0 && cur.messages.length > 0) return;
       const updated: Conversation = {
         ...cur,
         messages,
+        updatedAt: Date.now(),
         agentNames: agentNames ?? cur.agentNames,
       };
       // Mutate the conversations array
@@ -222,15 +245,15 @@ export function createConversationStore(opts?: {
 
       if (convs.length === 0) {
         // Last one — auto-create a fresh conversation
-        const fresh = createConversation();
+        const fresh = createConversation(defaultCorpusId);
         const newConvs = [fresh];
         p.save(fresh);
         p.saveLastOpened(fresh.id);
         setConversations(newConvs);
         setCurrentId(fresh.id);
       } else {
-        // Sort by createdAt descending; pick the newest (or first if not found)
-        const sorted = [...convs].sort((a, b) => b.createdAt - a.createdAt);
+        // Sort by updatedAt descending; pick the most recently updated
+        const sorted = sortedByUpdatedAt(convs);
         const nextId = sorted[0].id;
         p.saveLastOpened(nextId);
         setConversations(sorted);

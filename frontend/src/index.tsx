@@ -1,7 +1,7 @@
 /* @refresh reload */
 import './index.css';
-import './theme.css';
-import { initTheme } from './theme';
+import './theme/theme.css';
+import { initTheme } from './theme/theme';
 import { render } from 'solid-js/web';
 
 import App from './App';

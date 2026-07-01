@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createRoot } from "solid-js";
-import type { Conversation, ConversationPersistence } from "../store";
-import { ConversationStore, createConversationStore } from "../store";
+import type { Conversation, ConversationPersistence } from "@/conversations/store";
+import { ConversationStore, createConversationStore } from "@/conversations/store";
 
 // ── FakePersistence: Map-backed, no real localStorage ──
 
@@ -182,14 +182,18 @@ describe("ConversationStore", () => {
     const id2 = crypto.randomUUID();
     const conv1: Conversation = {
       id: id1,
+      corpusId: "",
       title: "Conversation 1",
       createdAt: Date.now() - 1000,
+      updatedAt: Date.now() - 1000,
       messages: [{ id: "1", role: "user" as const, parts: [{ type: "text" as const, content: "A" }] }],
     };
     const conv2: Conversation = {
       id: id2,
+      corpusId: "",
       title: "Conversation 2",
       createdAt: Date.now(),
+      updatedAt: Date.now(),
       messages: [],
     };
     freshPersistence.save(conv1);
@@ -221,14 +225,18 @@ describe("localStoragePersistence (integration)", () => {
     const id2 = crypto.randomUUID();
     const conv1: Conversation = {
       id: id1,
+      corpusId: "",
       title: "Conversation 1",
       createdAt: Date.now() - 1000,
+      updatedAt: Date.now() - 1000,
       messages: [{ id: "1", role: "user" as const, parts: [{ type: "text" as const, content: "A" }] }],
     };
     const conv2: Conversation = {
       id: id2,
+      corpusId: "",
       title: "Conversation 2",
       createdAt: Date.now(),
+      updatedAt: Date.now(),
       messages: [],
     };
     localStorage.setItem(`conversation:${id1}`, JSON.stringify(conv1));

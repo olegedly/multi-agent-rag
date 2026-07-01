@@ -35,19 +35,24 @@ class FakePersistence implements ConversationPersistence {
   }
 }
 
+const TEST_CORPUS_ID = "315e41aa-8657-46c0-ac4b-ea4355babf0a";
+
+function makeStore(persistence?: ConversationPersistence) {
+  let store!: ConversationStore;
+  let dispose: (() => void) | undefined;
+  createRoot((rd) => {
+    store = createConversationStore({ persistence, defaultCorpusId: TEST_CORPUS_ID });
+    dispose = rd;
+  });
+  return { store, dispose };
+}
+
 describe("ConversationPersistence injection", () => {
   it("injects a FakePersistence and never touches real localStorage", () => {
     const persistence = new FakePersistence();
 
-    let store!: ConversationStore;
-    let dispose: (() => void) | undefined;
+    const { store, dispose } = makeStore(persistence);
 
-    createRoot((rd) => {
-      store = createConversationStore({ persistence });
-      dispose = rd;
-    });
-
-    // The store should have auto-created one conversation through the fake
     expect(store.conversations().length).toBe(1);
     expect(store.currentId()).toBeTruthy();
 
@@ -68,7 +73,277 @@ describe("ConversationPersistence injection", () => {
   });
 });
 
-describe("localStoragePersistence adapter", () => {
+describe("ConversationStore", () => {
+  let persistence: FakePersistence;
+  let store: ConversationStore;
+  let dispose: (() => void) | undefined;
+
+  beforeEach(() => {
+    persistence = new FakePersistence();
+    const result = makeStore(persistence);
+    store = result.store;
+    dispose = result.dispose;
+  });
+
+  afterEach(() => {
+    dispose?.();
+  });
+
+  it("auto-creates one empty conversation on first use and selects it", () => {
+    const list = store.conversations();
+    expect(list.length).toBe(1);
+    expect(store.currentId()).toBe(list[0].id);
+    expect(list[0].messages).toEqual([]);
+    expect(list[0].title).toBe("New conversation");
+  });
+
+  it("creates a conversation with a corpusId", () => {
+    const conv = store.conversations()[0];
+    expect(conv.corpusId).toBe(TEST_CORPUS_ID);
+  });
+
+  it("creates a conversation with an updatedAt equal to createdAt", () => {
+    const conv = store.conversations()[0];
+    expect(conv.updatedAt).toBe(conv.createdAt);
+  });
+
+  it("sets updatedAt when saving messages", () => {
+    const before = Date.now();
+    store.saveCurrentMessages([
+      { id: "1", role: "user" as const, parts: [{ type: "text" as const, content: "Hello" }] },
+    ]);
+    const conv = store.conversations().find((c) => c.id === store.currentId())!;
+    expect(conv.updatedAt).toBeGreaterThanOrEqual(before);
+  });
+
+  it("creates a new conversation with the default corpusId", () => {
+    store.createNew();
+    const conv = store.conversations().find((c) => c.id === store.currentId())!;
+    expect(conv.corpusId).toBe(TEST_CORPUS_ID);
+  });
+
+  it("creates a new conversation with a given corpusId", () => {
+    store.createNew("other-corpus-uuid");
+    const conv = store.conversations().find((c) => c.id === store.currentId())!;
+    expect(conv.corpusId).toBe("other-corpus-uuid");
+  });
+
+  it("sorts conversations by updatedAt descending", () => {
+    store.updateCurrentTitle("Older");
+    const firstId = store.currentId();
+    // Wait a tick so timestamps differ
+    store.saveCurrentMessages([
+      { id: "m1", role: "user" as const, parts: [{ type: "text" as const, content: "Msg" }] },
+    ]);
+
+    store.createNew();
+    store.updateCurrentTitle("Newer");
+    const secondId = store.currentId();
+
+    const list = store.conversations();
+    expect(list.length).toBe(2);
+    // Newer (with updatedAt from message) should come first
+    const firstConv = list[0];
+    const secondConv = list[1];
+    expect(firstConv.updatedAt).toBeGreaterThanOrEqual(secondConv.updatedAt);
+  });
+
+  it("creates a new empty conversation and selects it", () => {
+    store.updateCurrentTitle("Existing convo");
+    const firstId = store.currentId();
+
+    store.createNew();
+
+    expect(store.conversations().length).toBe(2);
+    expect(store.currentId()).not.toBe(firstId);
+    const current = store.conversations().find((c) => c.id === store.currentId());
+    expect(current!.title).toBe("New conversation");
+    expect(current!.messages).toEqual([]);
+  });
+
+  it("switches to another conversation by id", () => {
+    const firstId = store.currentId();
+    store.createNew();
+    const secondId = store.currentId();
+
+    store.switchTo(firstId);
+    expect(store.currentId()).toBe(firstId);
+
+    store.switchTo(secondId);
+    expect(store.currentId()).toBe(secondId);
+  });
+
+  it("saves and retrieves messages for the current conversation", () => {
+    const messages = [
+      { id: "1", role: "user" as const, parts: [{ type: "text" as const, content: "Hello" }] },
+    ];
+    store.saveCurrentMessages(messages);
+
+    const retrieved = store.getCurrentMessages();
+    expect(retrieved).toEqual(messages);
+  });
+
+  it("preserves messages after unmount+remount (data survives)", () => {
+    const messages = [
+      { id: "1", role: "user" as const, parts: [{ type: "text" as const, content: "Persist me" }] },
+    ];
+    store.saveCurrentMessages(messages);
+    const convId = store.currentId();
+
+    // Simulate unmount/remount — dispose store, create new one with same persistence
+    dispose?.();
+    createRoot((rd) => {
+      store = createConversationStore({ persistence, defaultCorpusId: TEST_CORPUS_ID });
+      dispose = rd;
+    });
+
+    expect(store.currentId()).toBe(convId);
+    expect(store.getCurrentMessages()).toEqual(messages);
+  });
+
+  it("removes a conversation and switches to next", () => {
+    store.updateCurrentTitle("First");
+    store.createNew();
+    store.updateCurrentTitle("Second");
+    const secondId = store.currentId();
+    store.createNew();
+    store.updateCurrentTitle("Third");
+
+    store.switchTo(secondId);
+    store.removeCurrent();
+
+    expect(store.conversations().length).toBe(2);
+    expect(store.currentId()).not.toBe(secondId);
+  });
+
+  it("handles deleting the last conversation gracefully", () => {
+    expect(store.conversations().length).toBe(1);
+    const lastId = store.currentId();
+    store.removeCurrent();
+
+    expect(store.conversations().length).toBe(1);
+    expect(store.currentId()).not.toBe(lastId);
+  });
+
+  it("updates the current conversation's title", () => {
+    store.updateCurrentTitle("My new title");
+    const current = store.conversations().find((c) => c.id === store.currentId())!;
+    expect(current.title).toBe("My new title");
+  });
+
+  it("does not create a second 'New conversation' when one already exists", () => {
+    expect(store.conversations().length).toBe(1);
+    const existingId = store.currentId();
+
+    store.createNew();
+
+    expect(store.conversations().length).toBe(1);
+    expect(store.currentId()).toBe(existingId);
+  });
+
+  it("does not de-duplicate 'New conversation' across different corpusIds", () => {
+    // Create one empty convo in corpus A
+    const firstId = store.currentId();
+    // Create an empty convo in corpus B — should create new, not de-dup
+    store.createNew("corpus-b");
+    expect(store.conversations().length).toBe(2);
+  });
+
+  it("does create a second 'New conversation' when the first has messages", () => {
+    store.saveCurrentMessages([
+      { id: "1", role: "user" as const, parts: [{ type: "text" as const, content: "Hello" }] },
+    ]);
+    const firstId = store.currentId();
+
+    store.createNew();
+
+    expect(store.conversations().length).toBe(2);
+    expect(store.currentId()).not.toBe(firstId);
+    const current = store.conversations().find((c) => c.id === store.currentId());
+    expect(current!.title).toBe("New conversation");
+    expect(current!.messages).toEqual([]);
+  });
+
+  it("does create a second 'New conversation' when the first has a custom title", () => {
+    store.updateCurrentTitle("My query about AI");
+    const firstId = store.currentId();
+
+    store.createNew();
+
+    expect(store.conversations().length).toBe(2);
+    expect(store.currentId()).not.toBe(firstId);
+  });
+
+  it("loads pre-existing conversations from persistence on init", () => {
+    dispose?.();
+
+    // Pre-seed a fresh fake persistence
+    const freshPersistence = new FakePersistence();
+    const id1 = crypto.randomUUID();
+    const id2 = crypto.randomUUID();
+    const conv1: Conversation = {
+      id: id1,
+      corpusId: TEST_CORPUS_ID,
+      title: "Conversation 1",
+      createdAt: Date.now() - 1000,
+      updatedAt: Date.now() - 1000,
+      messages: [{ id: "1", role: "user" as const, parts: [{ type: "text" as const, content: "A" }] }],
+    };
+    const conv2: Conversation = {
+      id: id2,
+      corpusId: TEST_CORPUS_ID,
+      title: "Conversation 2",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      messages: [],
+    };
+    freshPersistence.save(conv1);
+    freshPersistence.save(conv2);
+    freshPersistence.saveLastOpened(id2);
+
+    createRoot((rd) => {
+      store = createConversationStore({ persistence: freshPersistence, defaultCorpusId: TEST_CORPUS_ID });
+      dispose = rd;
+    });
+
+    expect(store.conversations().length).toBe(2);
+    expect(store.currentId()).toBe(id2);
+  });
+
+  it("migrates legacy conversations without corpusId to the default", () => {
+    dispose?.();
+
+    const freshPersistence = new FakePersistence();
+    const id1 = crypto.randomUUID();
+    // Legacy conversation — no corpusId field
+    const legacy: Conversation = {
+      id: id1,
+      corpusId: "" as any,
+      title: "Legacy",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      messages: [],
+    };
+    // Strip corpusId to simulate old data
+    const raw = { ...legacy, corpusId: undefined } as any;
+    delete raw.corpusId;
+    freshPersistence.save(raw);
+
+    createRoot((rd) => {
+      store = createConversationStore({ persistence: freshPersistence, defaultCorpusId: TEST_CORPUS_ID });
+      dispose = rd;
+    });
+
+    const migrated = store.conversations()[0];
+    expect(migrated.corpusId).toBe(TEST_CORPUS_ID);
+
+    // Also verify it was persisted
+    const saved = freshPersistence.loadAll();
+    expect(saved[0].corpusId).toBe(TEST_CORPUS_ID);
+  });
+});
+
+describe("localStoragePersistence (integration)", () => {
   beforeEach(() => {
     localStorage.clear();
   });
@@ -77,48 +352,51 @@ describe("localStoragePersistence adapter", () => {
     localStorage.clear();
   });
 
-  it("saves and loads a conversation", () => {
-    const conv: Conversation = {
-      id: crypto.randomUUID(),
-      title: "Test",
-      createdAt: Date.now(),
-      messages: [],
-      agentNames: {},
+  it("loads existing conversations from localStorage on init (default persistence)", () => {
+    const id1 = crypto.randomUUID();
+    const id2 = crypto.randomUUID();
+    const conv1: Conversation = {
+      id: id1,
+      corpusId: TEST_CORPUS_ID,
+      title: "Conversation 1",
+      createdAt: Date.now() - 1000,
+      updatedAt: Date.now() - 1000,
+      messages: [{ id: "1", role: "user" as const, parts: [{ type: "text" as const, content: "A" }] }],
     };
-
-    localStoragePersistence.save(conv);
-    const loaded = localStoragePersistence.loadAll();
-    expect(loaded.length).toBe(1);
-    expect(loaded[0].id).toBe(conv.id);
-    expect(loaded[0].title).toBe("Test");
-  });
-
-  it("removes a conversation", () => {
-    const conv: Conversation = {
-      id: crypto.randomUUID(),
-      title: "Test",
+    const conv2: Conversation = {
+      id: id2,
+      corpusId: TEST_CORPUS_ID,
+      title: "Conversation 2",
       createdAt: Date.now(),
+      updatedAt: Date.now(),
       messages: [],
-      agentNames: {},
     };
+    localStorage.setItem(`conversation:${id1}`, JSON.stringify(conv1));
+    localStorage.setItem(`conversation:${id2}`, JSON.stringify(conv2));
+    localStorage.setItem("conversation:lastOpened", id2);
 
-    localStoragePersistence.save(conv);
-    expect(localStoragePersistence.loadAll().length).toBe(1);
+    let store!: ConversationStore;
+    createRoot((rd) => {
+      store = createConversationStore({ defaultCorpusId: TEST_CORPUS_ID });
+      return rd;
+    });
 
-    localStoragePersistence.remove(conv.id);
-    expect(localStoragePersistence.loadAll().length).toBe(0);
+    expect(store!.conversations().length).toBe(2);
+    expect(store!.currentId()).toBe(id2);
   });
 
-  it("round-trips lastOpened", () => {
-    const id = crypto.randomUUID();
-    localStoragePersistence.saveLastOpened(id);
-    expect(localStoragePersistence.loadLastOpened()).toBe(id);
+  it("tolerates corrupt localStorage gracefully", () => {
+    const origWarn = console.warn;
+    console.warn = () => {};
+    localStorage.setItem("conversation:bad", "not valid json");
 
-    localStoragePersistence.saveLastOpened("other-id");
-    expect(localStoragePersistence.loadLastOpened()).toBe("other-id");
-  });
+    let store!: ConversationStore;
+    createRoot((rd) => {
+      store = createConversationStore({ defaultCorpusId: TEST_CORPUS_ID });
+      return rd;
+    });
+    console.warn = origWarn;
 
-  it("returns undefined when no lastOpened stored", () => {
-    expect(localStoragePersistence.loadLastOpened()).toBeUndefined();
+    expect(store!.conversations().length).toBeGreaterThanOrEqual(1);
   });
 });

@@ -2,10 +2,10 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@solidjs/testing-library";
 import { Sidebar } from "../Sidebar";
 
-function makeConvs() {
+function makeConvs(corpusId: string = "corpus-1") {
   return [
-    { id: "1", title: "Chat A", createdAt: 200, messages: [] },
-    { id: "2", title: "Chat B", createdAt: 100, messages: [] },
+    { id: "1", corpusId, title: "Chat A", createdAt: 200, updatedAt: 200, messages: [] },
+    { id: "2", corpusId, title: "Chat B", createdAt: 100, updatedAt: 100, messages: [] },
   ];
 }
 
@@ -22,6 +22,7 @@ describe("Sidebar", () => {
       <Sidebar
         conversations={conversations}
         currentId="1"
+        activeCorpusId="corpus-1"
         onSelect={() => {}}
         onNew={() => {}}
         onDelete={() => {}}
@@ -39,6 +40,7 @@ describe("Sidebar", () => {
       <Sidebar
         conversations={[]}
         currentId=""
+        activeCorpusId="corpus-1"
         onSelect={() => {}}
         onNew={() => {}}
         onDelete={() => {}}
@@ -56,6 +58,7 @@ describe("Sidebar", () => {
       <Sidebar
         conversations={[]}
         currentId=""
+        activeCorpusId="corpus-1"
         onSelect={() => {}}
         onNew={onNew}
         onDelete={() => {}}
@@ -74,6 +77,7 @@ describe("Sidebar", () => {
       <Sidebar
         conversations={makeConvs()}
         currentId="1"
+        activeCorpusId="corpus-1"
         onSelect={onSelect}
         onNew={() => {}}
         onDelete={() => {}}
@@ -91,6 +95,7 @@ describe("Sidebar", () => {
       <Sidebar
         conversations={makeConvs()}
         currentId="1"
+        activeCorpusId="corpus-1"
         onSelect={() => {}}
         onNew={() => {}}
         onDelete={() => {}}
@@ -108,6 +113,7 @@ describe("Sidebar", () => {
       <Sidebar
         conversations={makeConvs()}
         currentId="1"
+        activeCorpusId="corpus-1"
         onSelect={() => {}}
         onNew={() => {}}
         onDelete={() => {}}
@@ -125,6 +131,7 @@ describe("Sidebar", () => {
       <Sidebar
         conversations={makeConvs()}
         currentId="1"
+        activeCorpusId="corpus-1"
         onSelect={() => {}}
         onNew={() => {}}
         onDelete={() => {}}
@@ -135,5 +142,28 @@ describe("Sidebar", () => {
 
     expect(screen.getByText("Conversations")).toBeTruthy();
     expect(screen.getByText("+ New")).toBeTruthy();
+  });
+
+  it("filters conversations to only those matching activeCorpusId", () => {
+    const conversations = [
+      ...makeConvs("corpus-1"),
+      { id: "3", corpusId: "corpus-2", title: "Other Corpus", createdAt: 50, updatedAt: 50, messages: [] },
+    ];
+    render(() => (
+      <Sidebar
+        conversations={conversations}
+        currentId="1"
+        activeCorpusId="corpus-1"
+        onSelect={() => {}}
+        onNew={() => {}}
+        onDelete={() => {}}
+        isOpen={true}
+        onClose={() => {}}
+      />
+    ));
+
+    expect(screen.queryByText("Chat A")).toBeTruthy();
+    expect(screen.queryByText("Chat B")).toBeTruthy();
+    expect(screen.queryByText("Other Corpus")).toBeNull();
   });
 });

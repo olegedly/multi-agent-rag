@@ -4,6 +4,7 @@ import type { Conversation } from "./store";
 interface SidebarProps {
   conversations: Conversation[];
   currentId: string;
+  activeCorpusId: string;
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
@@ -14,10 +15,15 @@ interface SidebarProps {
 export function Sidebar(props: SidebarProps) {
   const [confirmingId, setConfirmingId] = createSignal<string | null>(null);
 
+  // Filter conversations to only those belonging to the active corpus
+  const filtered = createMemo(() =>
+    props.conversations.filter((c) => c.corpusId === props.activeCorpusId),
+  );
+
   const enriched = createMemo(() => {
     const currId = props.currentId;
     const confirmId = confirmingId();
-    return props.conversations.map((conv) => ({
+    return filtered().map((conv) => ({
       conv,
       isCurrent: conv.id === currId,
       isConfirming: confirmId === conv.id,
@@ -63,7 +69,7 @@ export function Sidebar(props: SidebarProps) {
       {/* List */}
       <div class="flex-1 overflow-y-auto p-2 space-y-1">
         <Show
-          when={props.conversations.length > 0}
+          when={enriched().length > 0}
           fallback={
             <p class="text-sm text-(--text-secondary) text-center py-8">
               No conversations
