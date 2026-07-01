@@ -5,6 +5,15 @@ A config-driven multi-agent research system with pgvector RAG, MCP tool servers,
 
 ## Quick Start
 
+First, create your config:
+
+```bash
+cp .env.example .env
+# Then edit .env with your API keys
+```
+
+Then start the dev environment:
+
 ```bash
 ./dev.sh
 ```
