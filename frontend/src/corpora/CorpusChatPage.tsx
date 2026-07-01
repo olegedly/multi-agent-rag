@@ -1,4 +1,4 @@
-import { Show, For, createEffect, on, onCleanup, untrack, type Component } from "solid-js";
+import { Show, For, createEffect, on, untrack, type Component } from "solid-js";
 import { A, useParams } from "@solidjs/router";
 import { useCorpora } from "./CorporaProvider";
 import { useConversationStore } from "@/conversations/ConversationStoreProvider";
@@ -7,15 +7,12 @@ import { useChat, fetchServerSentEvents } from "@tanstack/ai-solid";
 import { resilientFetch } from "@/chat/resilientFetch";
 import { generateTitle } from "@/conversations/title";
 
-const D = "[conv]";
 
 /** Chat session — mounted per conversation via For's keyed lifecycle. */
 const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (props) => {
   const store = useConversationStore();
   const sseUrl = () => `/api/chat/${props.corpusSlug}`;
 
-  console.log(D, "MOUNT convId=", props.convId, "initMsgs=", store.getCurrentMessages().length);
-  onCleanup(() => console.log(D, "CLEANUP convId=", props.convId));
 
   const chat = useChat({
     id: `chat-${props.convId}`,
@@ -27,20 +24,26 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
     },
   });
 
-  // Log what the chat hook reports
+  // Persist messages when they change AFTER initial mount
+  // (initial messages come from the store already persisted; re-saving
+  // bumps updatedAt and re-sorts the sidebar for no reason)
+  let initial = true;
   createEffect(() => {
-    console.log(D, "msgs.len=", chat.messages().length, "isLoading=", chat.isLoading(), "convId=", props.convId);
+    const msgs = chat.messages();
+    if (initial) { initial = false; return; }
+    if (msgs.length > 0) {
+      untrack(() => store.saveCurrentMessages(msgs));
+    }
   });
 
-  // Persist messages on every change (streamed updates, new messages)
+  // Derive title when first user message appears
   createEffect(() => {
     const msgs = chat.messages();
     if (msgs.length > 0) {
-      untrack(() => {
-        store.saveCurrentMessages(msgs);
-        const title = deriveTitle(msgs);
-        if (title) store.updateCurrentTitle(title);
-      });
+      const title = deriveTitle(msgs);
+      if (title) {
+        untrack(() => store.updateCurrentTitle(title));
+      }
     }
   });
 
@@ -87,7 +90,6 @@ export const CorpusChatPage: Component = () => {
     ),
   );
 
-  console.log(D, "render currentId=", store.currentId());
 
   return (
     <>
