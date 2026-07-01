@@ -7,7 +7,7 @@ must be stripped to avoid a 400 from the LLM provider.
 
 from langchain_core.messages import AIMessage
 
-from backend.agents.pipeline import _convert_dict_messages
+from backend.agents.graph_orchestrator import _convert_dict_messages
 
 
 def _as_ai(msg: object) -> AIMessage:

@@ -15,10 +15,10 @@ from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 
-from backend.agents.pipeline import run_pipeline
+from backend.agents.graph_orchestrator import run_orchestrator
 from backend.config import Settings, get_settings
 from backend.corpus_config import CorporaConfig
-from backend.middleware import BudgetStore, ChatGuard, JsonFileBudget
+from backend.middleware import ChatGuard
 
 
 def create_app(
@@ -53,23 +53,13 @@ def create_app(
     app = FastAPI(title=settings.app_name, lifespan=_lifespan)
 
     # ------------------------------------------------------------------
-    # Daily token budget
-    # ------------------------------------------------------------------
-    budget_file: BudgetStore | None = None
-    if not settings.demo_disable_budget:
-        budget_file = JsonFileBudget(
-            path=settings.demo_budget_file,
-            daily_limit=settings.demo_daily_budget_tokens,
-        )
-
-    # ------------------------------------------------------------------
     # ChatGuard middleware
     # ------------------------------------------------------------------
     app.add_middleware(
         ChatGuard,
         max_query_length=settings.demo_max_query_length,
         max_user_messages=settings.demo_max_user_messages,
-        budget_file=budget_file,
+        budget_file=settings.budget_store,
     )
 
     # ------------------------------------------------------------------
@@ -100,7 +90,7 @@ def create_app(
 
         async def _stream():
             try:
-                async for event in run_pipeline(
+                async for event in run_orchestrator(
                     messages,
                     slug,
                     corpora_config=corpora_config,

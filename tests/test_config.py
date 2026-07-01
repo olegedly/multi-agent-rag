@@ -61,6 +61,24 @@ class TestDemoBudgetDefaults:
         assert s.demo_max_user_messages == 50
 
 
+    def test_budget_store_disabled_when_demo_disable_budget(self) -> None:
+        """budget_store is None when demo_disable_budget=True."""
+        s = Settings(_env_file=None, demo_disable_budget=True)  # type: ignore[call-arg]
+        assert s.budget_store is None
+
+    def test_budget_store_returns_budget_store_instance(self, tmp_path) -> None:
+        """budget_store returns a BudgetStore instance when enabled."""
+        from backend.middleware import BudgetStore
+        s = Settings(
+            _env_file=None,  # type: ignore[call-arg]
+            demo_disable_budget=False,
+            demo_daily_budget_tokens=100,
+            demo_budget_file=str(tmp_path / "demo-budget.json"),
+        )
+        store = s.budget_store
+        assert store is not None
+        assert isinstance(store, BudgetStore)
+        assert store.daily_limit == 100
 class TestSettingsEnvFile:
     def test_ignores_extra_keys(self) -> None:
         """SettingsConfigDict(extra='ignore') discards unknown env vars."""

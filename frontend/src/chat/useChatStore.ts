@@ -2,9 +2,9 @@ import { onCleanup, onMount, createSignal } from "solid-js";
 import { fetchServerSentEvents, useChat } from "@tanstack/ai-solid";
 import type { UIMessage } from "@tanstack/ai-client";
 import type { StreamChunk } from "@tanstack/ai";
-import { createConversationStore } from "./store";
-import { generateTitle } from "./title";
-import { resilientFetch } from "./resilientFetch";
+import { createConversationStore } from "@/conversations/store";
+import { generateTitle } from "@/conversations/title";
+import { resilientFetch } from "@/chat/resilientFetch";
 
 const SAVE_KEY = "chat:hasUnsaved";
 

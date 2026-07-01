@@ -5,12 +5,74 @@ import type { UIMessage } from "@tanstack/ai-client";
 
 export interface Conversation {
   id: string;
+  corpusId: string;
   title: string;
   createdAt: number;
+  /** Timestamp of the most recent message or creation time if no messages yet. */
+  updatedAt: number;
   messages: UIMessage[];
   /** Persisted mapping of messageId → agent name, survives page reload. */
   agentNames?: Record<string, string>;
 }
+
+export interface ConversationPersistence {
+  /** Load all persisted conversations. */
+  loadAll(): Conversation[];
+  /** Persist a conversation. Throws QuotaExceededError on storage full. */
+  save(conv: Conversation): void;
+  /** Remove a conversation by id. */
+  remove(id: string): void;
+  /** Load the last opened conversation id, if any. */
+  loadLastOpened(): string | undefined;
+  /** Persist the last opened conversation id. */
+  saveLastOpened(id: string): void;
+}
+
+export const localStoragePersistence: ConversationPersistence = {
+  loadAll(): Conversation[] {
+    const convs: Conversation[] = [];
+    const errors: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(LS_PREFIX) && key !== LS_LAST_OPENED) {
+        try {
+          const parsed = JSON.parse(localStorage.getItem(key)!);
+          if (parsed && typeof parsed.id === "string") {
+            convs.push(parsed);
+          }
+        } catch {
+          errors.push(key);
+        }
+      }
+    }
+    if (errors.length > 0) {
+      console.warn("Skipped corrupt conversation keys:", errors.join(", "));
+    }
+    return convs;
+  },
+
+  save(conv: Conversation) {
+    try {
+      localStorage.setItem(lsKey(conv.id), JSON.stringify(conv));
+    } catch (e) {
+      if (e instanceof DOMException && e.name === "QuotaExceededError") {
+        throw e;
+      }
+    }
+  },
+
+  remove(id: string) {
+    localStorage.removeItem(lsKey(id));
+  },
+
+  loadLastOpened(): string | undefined {
+    return localStorage.getItem(LS_LAST_OPENED) ?? undefined;
+  },
+
+  saveLastOpened(id: string) {
+    localStorage.setItem(LS_LAST_OPENED, id);
+  },
+};
 
 const LS_PREFIX = "conversation:";
 const LS_LAST_OPENED = "conversation:lastOpened";
@@ -19,55 +81,14 @@ function lsKey(id: string) {
   return `${LS_PREFIX}${id}`;
 }
 
-function loadAllConversations(): Conversation[] {
-  const convs: Conversation[] = [];
-  const errors: string[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key?.startsWith(LS_PREFIX) && key !== LS_LAST_OPENED) {
-      try {
-        const parsed = JSON.parse(localStorage.getItem(key)!);
-        if (parsed && typeof parsed.id === "string") {
-          convs.push(parsed);
-        }
-      } catch {
-        errors.push(key);
-      }
-    }
-  }
-  if (errors.length > 0) {
-    console.warn("Skipped corrupt conversation keys:", errors.join(", "));
-  }
-  return convs;
-}
-
-function saveConversation(conv: Conversation) {
-  try {
-    localStorage.setItem(lsKey(conv.id), JSON.stringify(conv));
-  } catch (e) {
-    if (e instanceof DOMException && e.name === "QuotaExceededError") {
-      throw e;
-    }
-  }
-}
-
-function removeConversation(id: string) {
-  localStorage.removeItem(lsKey(id));
-}
-
-function saveLastOpened(id: string) {
-  localStorage.setItem(LS_LAST_OPENED, id);
-}
-
-function loadLastOpened(): string | undefined {
-  return localStorage.getItem(LS_LAST_OPENED) ?? undefined;
-}
-
-function createConversation(): Conversation {
+function createConversation(corpusId: string): Conversation {
+  const now = Date.now();
   return {
     id: crypto.randomUUID(),
+    corpusId,
     title: "New conversation",
-    createdAt: Date.now(),
+    createdAt: now,
+    updatedAt: now,
     messages: [],
     agentNames: {},
   };
@@ -79,7 +100,7 @@ export interface ConversationStore {
   currentConversation: () => Conversation | undefined;
   getCurrentMessages: () => UIMessage[];
   getCurrentAgentNames: () => Record<string, string>;
-  createNew: () => string;
+  createNew: (corpusId?: string) => string;
   switchTo: (id: string) => void;
   saveCurrentMessages: (messages: UIMessage[], agentNames?: Record<string, string>) => void;
   removeCurrent: () => void;
@@ -88,23 +109,76 @@ export interface ConversationStore {
   setStorageError: (err: string | null) => void;
 }
 
-export function createConversationStore(): ConversationStore {
-  let loaded = loadAllConversations();
-  let lastOpened = loadLastOpened();
+export function createConversationStore(opts?: {
+  persistence?: ConversationPersistence;
+  defaultCorpusId?: string;
+}): ConversationStore {
+  const p = opts?.persistence ?? localStoragePersistence;
+  const defaultCorpusId = opts?.defaultCorpusId ?? "";
+  let loaded = p.loadAll();
+  let lastOpened = p.loadLastOpened();
+
+  // Record whether we've migrated anything so we can persist once at the end
+  let migrated = false;
+  loaded = loaded.map((c) => {
+    let changed = false;
+
+    // Legacy: assign defaultCorpusId to conversations without one
+    if (!c.corpusId) {
+      c = { ...c, corpusId: defaultCorpusId };
+      changed = true;
+    }
+
+    // Legacy: fix conversations whose updatedAt doesn't match their newest message.
+    // The old conversation-switching bug was re-saving every conversation on
+    // every mount with Date.now(), corrupting all updatedAt timestamps.
+    let fixedUpdatedAt: number | undefined;
+    if (c.messages.length > 0) {
+      // Derive from the last message's createdAt (or updatedAt from the last assistant message)
+      const lastMsg = c.messages[c.messages.length - 1];
+      const msgTime = lastMsg.createdAt instanceof Date
+        ? lastMsg.createdAt.getTime()
+        : typeof lastMsg.createdAt === 'number'
+          ? lastMsg.createdAt
+          : typeof lastMsg.createdAt === 'string'
+            ? new Date(lastMsg.createdAt).getTime()
+            : undefined;
+      if (msgTime !== undefined && Math.abs(msgTime - c.updatedAt) > 5000) {
+        fixedUpdatedAt = msgTime;
+      }
+    } else {
+      // Empty conversation — updatedAt should equal createdAt
+      if (c.updatedAt !== c.createdAt && c.createdAt > 0) {
+        fixedUpdatedAt = c.createdAt;
+      }
+    }
+
+    if (fixedUpdatedAt !== undefined) {
+      c = { ...c, updatedAt: fixedUpdatedAt };
+      changed = true;
+    }
+
+    if (changed) migrated = true;
+    return c;
+  });
+  // Persist any migrations
+  if (migrated) {
+    loaded.forEach((c) => p.save(c));
+  }
 
   if (loaded.length === 0) {
-    const first = createConversation();
+    const first = createConversation(defaultCorpusId);
     loaded = [first];
-    saveConversation(first);
-    saveLastOpened(first.id);
+    p.save(first);
+    p.saveLastOpened(first.id);
     lastOpened = first.id;
   }
 
-  // Restore last opened conversation; if not found, use first
+  // Restore last opened conversation; if not found, use most recently updated
   const initialId =
     lastOpened && loaded.some((c) => c.id === lastOpened)
       ? lastOpened
-      : loaded[0].id;
+      : sortedByUpdatedAt(loaded)[0].id;
 
   const [conversations, setConversations] = createSignal<Conversation[]>(loaded);
   const [currentId, setCurrentId] = createSignal<string>(initialId);
@@ -114,15 +188,12 @@ export function createConversationStore(): ConversationStore {
     conversations().find((c) => c.id === currentId())
   );
 
-  function persistAndNotify(convs: Conversation[], currId: string) {
-    setConversations([...convs]);
-    setCurrentId(currId);
-    saveLastOpened(currId);
+  function sortedByUpdatedAt(convs: Conversation[]): Conversation[] {
+    return [...convs].sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   function getConversationList(): Conversation[] {
-    // Return sorted newest first
-    return [...conversations()].sort((a, b) => b.createdAt - a.createdAt);
+    return sortedByUpdatedAt(conversations());
   }
 
   return {
@@ -140,24 +211,37 @@ export function createConversationStore(): ConversationStore {
       return cur?.agentNames ?? {};
     },
 
-    createNew() {
-      // If there's already a fresh empty conversation (title "New conversation",
-      // no messages), switch to it instead of creating a duplicate. This
-      // prevents the "+ New" button from piling up empty conversations.
+    createNew(corpusId?: string) {
+      const targetCorpusId = corpusId ?? defaultCorpusId;
+
+      // De-duplication: only match empty conversations in the same corpus
       const existing = conversations().find(
-        (c) => c.title === "New conversation" && c.messages.length === 0,
+        (c) =>
+          c.corpusId === targetCorpusId &&
+          c.title === "New conversation" &&
+          c.messages.length === 0,
       );
       if (existing) {
         setCurrentId(existing.id);
-        saveLastOpened(existing.id);
+        p.saveLastOpened(existing.id);
+        // Bump updatedAt so the reused entry sorts to the top
+        const bumped: Conversation = { ...existing, updatedAt: Date.now() };
+        p.save(bumped);
+        setConversations(
+          sortedByUpdatedAt(
+            conversations().map((c) => (c.id === existing.id ? bumped : c)),
+          ),
+        );
         return existing.id;
       }
 
-      const conv = createConversation();
-      const convs = [...conversations(), conv];
-      saveConversation(conv);
+      const conv = createConversation(targetCorpusId);
+      // Prepend so the new conversation sorts first even when timestamps tie
+      // (stable sort preserves relative order for equal keys)
+      const convs = sortedByUpdatedAt([conv, ...conversations()]);
+      p.save(conv);
       setCurrentId(conv.id);
-      saveLastOpened(conv.id);
+      p.saveLastOpened(conv.id);
       setConversations(convs);
       return conv.id;
     },
@@ -165,7 +249,7 @@ export function createConversationStore(): ConversationStore {
     switchTo(id: string) {
       if (conversations().some((c) => c.id === id)) {
         setCurrentId(id);
-        saveLastOpened(id);
+        p.saveLastOpened(id);
       }
     },
 
@@ -174,13 +258,12 @@ export function createConversationStore(): ConversationStore {
       if (!cur) return;
 
       // Defense in depth: never overwrite non-empty localStorage data
-      // with an empty message array. This prevents any caller error
-      // (e.g., a stale beforeunload handler or HMR teardown race)
-      // from silently wiping a conversation's history.
+      // with an empty message array.
       if (messages.length === 0 && cur.messages.length > 0) return;
       const updated: Conversation = {
         ...cur,
         messages,
+        updatedAt: Date.now(),
         agentNames: agentNames ?? cur.agentNames,
       };
       // Mutate the conversations array
@@ -188,7 +271,7 @@ export function createConversationStore(): ConversationStore {
         c.id === cur.id ? updated : c
       );
       try {
-        saveConversation(updated);
+        p.save(updated);
         setStorageError(null);
       } catch (e) {
         if (e instanceof DOMException && e.name === "QuotaExceededError") {
@@ -202,21 +285,21 @@ export function createConversationStore(): ConversationStore {
     removeCurrent() {
       const id = currentId();
       const convs = conversations().filter((c) => c.id !== id);
-      removeConversation(id);
+      p.remove(id);
 
       if (convs.length === 0) {
         // Last one — auto-create a fresh conversation
-        const fresh = createConversation();
+        const fresh = createConversation(defaultCorpusId);
         const newConvs = [fresh];
-        saveConversation(fresh);
-        saveLastOpened(fresh.id);
+        p.save(fresh);
+        p.saveLastOpened(fresh.id);
         setConversations(newConvs);
         setCurrentId(fresh.id);
       } else {
-        // Sort by createdAt descending; pick the newest (or first if not found)
-        const sorted = [...convs].sort((a, b) => b.createdAt - a.createdAt);
+        // Sort by updatedAt descending; pick the most recently updated
+        const sorted = sortedByUpdatedAt(convs);
         const nextId = sorted[0].id;
-        saveLastOpened(nextId);
+        p.saveLastOpened(nextId);
         setConversations(sorted);
         setCurrentId(nextId);
       }
@@ -229,7 +312,7 @@ export function createConversationStore(): ConversationStore {
       const convs = conversations().map((c) =>
         c.id === cur.id ? updated : c
       );
-      saveConversation(updated);
+      p.save(updated);
       setConversations(convs);
     },
 

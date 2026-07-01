@@ -1,4 +1,4 @@
-import { For, Index, Show, useContext, createEffect, createSignal } from "solid-js";
+import { For, Index, Show, createEffect, createSignal, type JSX } from "solid-js";
 import { SolidMarkdown } from "solid-markdown";
 import remarkGfm from "remark-gfm";
 import type {
@@ -14,6 +14,7 @@ import { CollapsibleSection } from "./CollapsibleSection";
 import { groupParts } from "./groupParts";
 import type { GroupItem, PairItem } from "./groupParts";
 import { markCollapsed, isCollapsedInSession } from "./toolResultTracker";
+import { createCollapseState } from "./collapse";
 
 // ── Agent name emoji map ──────────────────────────────────────────
 
@@ -35,6 +36,10 @@ export interface MessagePartRendererProps {
   agentNameMap?: Record<string, string>;
   /** Set of message IDs whose TEXT_MESSAGE_END has been received. */
   endedMessageIds?: Set<string>;
+  /** Reactive signal of the ended message IDs set */
+  endedSet?: () => Set<string>;
+  /** Reactive signal that ticks when loading transitions to false */
+  stopTick?: () => number;
 }
 
 // ── Main renderer ────────────────────────────────────────────────────────
@@ -42,9 +47,6 @@ export interface MessagePartRendererProps {
 export function MessagePartRenderer(props: MessagePartRendererProps) {
   const { msg, isLoading, nextToolCallTick, isNewToolResult, agentNameMap } =
     props;
-  const endedMessageIds = (
-    useContext(MessageEndedContext) ?? (() => new Set<string>())
-  )();
   const agentName =
     msg.role === "assistant" ? agentNameMap?.[msg.id] : undefined;
 
@@ -78,6 +80,9 @@ export function MessagePartRenderer(props: MessagePartRendererProps) {
                 }
                 nextToolCallTick={nextToolCallTick}
                 isLoading={isLoading}
+                endedSet={props.endedSet}
+                stopTick={props.stopTick}
+                endedMessageIds={props.endedMessageIds}
               />
             );
           }
@@ -87,8 +92,10 @@ export function MessagePartRenderer(props: MessagePartRendererProps) {
               msgId={msg.id}
               isNewToolResult={false}
               isLoading={isLoading}
-              endedMessageIds={endedMessageIds}
+              endedMessageIds={props.endedMessageIds}
               nextToolCallTick={nextToolCallTick}
+              endedSet={props.endedSet}
+              stopTick={props.stopTick}
             />
           );
         }}
@@ -106,7 +113,9 @@ function PartRenderer(props: {
   isLoading: boolean;
   nextToolCallTick: number;
   endedMessageIds?: Set<string>;
-}) {
+  endedSet?: () => Set<string>;
+  stopTick?: () => number;
+}): JSX.Element {
   return (
     <>
       {props.part.type === "text" && <TextPartRenderer part={props.part} />}
@@ -116,6 +125,9 @@ function PartRenderer(props: {
           isLoading={props.isLoading}
           nextToolCallTick={props.nextToolCallTick}
           msgId={props.msgId}
+          endedSet={props.endedSet}
+          stopTick={props.stopTick}
+          endedMessageIds={props.endedMessageIds}
         />
       )}
       {props.part.type === "tool-result" && (
@@ -125,6 +137,9 @@ function PartRenderer(props: {
           nextToolCallTick={props.nextToolCallTick}
           isLoading={props.isLoading}
           msgId={props.msgId}
+          endedSet={props.endedSet}
+          stopTick={props.stopTick}
+          endedMessageIds={props.endedMessageIds}
         />
       )}
     </>
@@ -147,7 +162,10 @@ function ToolCallPairRenderer(props: {
   isLoading: boolean;
   isNewToolResult: boolean;
   nextToolCallTick: number;
-}) {
+  endedSet?: () => Set<string>;
+  stopTick?: () => number;
+  endedMessageIds?: Set<string>;
+}): JSX.Element {
   return (
     <div class="mt-2.5">
       <ToolCallRenderer part={props.toolCall} />
@@ -159,6 +177,9 @@ function ToolCallPairRenderer(props: {
             isLoading={props.isLoading}
             nextToolCallTick={props.nextToolCallTick}
             msgId={props.msgId}
+            endedSet={props.endedSet}
+            stopTick={props.stopTick}
+            endedMessageIds={props.endedMessageIds}
           />
         )}
       </Show>
@@ -178,20 +199,30 @@ function TextPartRenderer(props: { part: TextPart }) {
     </div>
   );
 }
-import { MessageEndedContext } from "./ChatView";
+
 function ThinkingPartRenderer(props: {
   part: ThinkingPart;
   isLoading: boolean;
   nextToolCallTick: number;
   msgId: string;
-}) {
-  const endedSet = (
-    useContext(MessageEndedContext) ?? (() => new Set<string>())
-  )();
-  // Start expanded during active streaming.
-  // Stay open through tool-call interleaving — collapse only when the
-  // entire stream stops (handled by StopCollapseContext in CollapsibleSection).
-  // When loaded from storage (isLoading=false), start collapsed.
+  endedSet?: () => Set<string>;
+  stopTick?: () => number;
+  endedMessageIds?: Set<string>;
+}): JSX.Element {
+  const collapse = createCollapseState({
+    // Start expanded during active streaming.
+    // Stay open through tool-call interleaving — collapse only when the
+    // entire stream stops or the owning agent finishes.
+    // When loaded from storage (isLoading=false), start collapsed.
+    initiallyExpanded: props.isLoading && !(props.endedSet?.().has(props.msgId) ?? false),
+    // Collapse when any agent finishes (endedSet grows per TEXT_MESSAGE_END).
+    collapseOnTick: () => props.endedSet?.().size ?? 0,
+    // Collapse when the stream stops (loading → false).
+    stopTick: props.stopTick,
+    onToggle: (expanded) => {
+      // No persistence needed for thinking blocks
+    },
+  });
 
   // ── Stick-to-bottom scrolling ──────────────────────────────────────
   let scrollRef: HTMLDivElement | undefined;
@@ -232,11 +263,8 @@ function ThinkingPartRenderer(props: {
     <div class="mt-4">
       <CollapsibleSection
         label="Reasoned"
-        // Collapse when any agent finishes (endedSet grows per TEXT_MESSAGE_END).
-        // Uses collapseOnTick (tied to endedSet.size) so it works across
-        // <For>/<Index> boundaries, plus expanded as a safety net.
-        expanded={props.isLoading && !endedSet.has(props.msgId)}
-        collapseOnTick={endedSet.size}
+        expanded={collapse.expanded()}
+        onToggle={collapse.toggle}
         leadingIcon={
           <svg
             xmlns="http://www.w3.org/2000/svg"
@@ -322,40 +350,41 @@ function ToolResultPartRenderer(props: {
   isLoading: boolean;
   nextToolCallTick: number;
   msgId: string;
-}) {
-  const getEndedSet = useContext(MessageEndedContext) ?? (() => new Set<string>());
-
+  endedSet?: () => Set<string>;
+  stopTick?: () => number;
+  endedMessageIds?: Set<string>;
+}): JSX.Element {
   // ── Collapse memory ───────────────────────────────────────────────────
   // Persists across <For> re-creations so a previously-collapsed result
   // stays collapsed even when streaming updates re-mount the component.
   const sectionKey = `${props.msgId}:${props.part.toolCallId}`;
   const wasCollapsed = isCollapsedInSession(props.msgId, props.part.toolCallId);
 
-  // ── Expand / Collapse triggers ───────────────────────────────────────
-  // 1. expands => new result appears OR we're still loading (never collapsed)
-  // 2. collapseOnTick => nextToolCallTick (unpaired call arrives) OR endedSet (message finishes)
-  // 3. autoCollapseMs=1500 => collapses 1.5s after last content chunk
-  // 4. disableStopCollapse => we ignore the broken stopTick context
-
-  const stuckExpanded = props.isNew || (props.isLoading && !wasCollapsed);
-  const collapseTick = props.nextToolCallTick + (getEndedSet().has(props.msgId) ? 1 : 0);
-
-  const handleToggle = (newExpanded: boolean) => {
-    if (!newExpanded) {
-      markCollapsed(props.msgId, props.part.toolCallId);
-    }
-  };
+  // The collapse state:
+  // 1. initiallyExpanded => new result OR still loading and not previously collapsed
+  // 2. autoCollapseMs=1500 => collapses 1.5s after last content chunk
+  // 3. collapseOnTick => nextToolCallTick (new unpaired call arrives)
+  // 4. disableStopCollapse => we ignore the stopTick context, use autoCollapseMs instead
+  const collapseState = createCollapseState({
+    initiallyExpanded: props.isNew || (props.isLoading && !wasCollapsed),
+    autoCollapseMs: 1500,
+    resetOn: () => props.part.content,
+    collapseOnTick: () => props.nextToolCallTick + ((props.endedSet?.().has(props.msgId) ?? false) ? 1 : 0),
+    stopTick: props.stopTick,
+    disableStopCollapse: true,
+    onToggle: (expanded) => {
+      if (!expanded) {
+        markCollapsed(props.msgId, props.part.toolCallId);
+      }
+    },
+  });
 
   return (
     <div class="mt-2 pl-5">
       <CollapsibleSection
         label="Result"
-        expanded={stuckExpanded}
-        autoCollapseMs={1500}
-        resetTimerOn={[props.part.content, props.isLoading]}
-        collapseOnTick={collapseTick}
-        disableStopCollapse={true}
-        onToggle={handleToggle}
+        expanded={collapseState.expanded()}
+        onToggle={collapseState.toggle}
         leadingIcon={
           <svg
             xmlns="http://www.w3.org/2000/svg"

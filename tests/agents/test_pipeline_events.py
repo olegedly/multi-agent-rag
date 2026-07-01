@@ -539,13 +539,13 @@ async def collect_pipeline_events(
     model=None,
 ) -> list[object]:
     """Collect pipeline events into a list."""
-    from backend.agents.pipeline import run_pipeline
+    from backend.agents.graph_orchestrator import run_orchestrator
     from backend.config import Settings
 
     settings = Settings(demo_disable_budget=True)  # no /data/ needed
 
     events: list[object] = []
-    async for event in run_pipeline(
+    async for event in run_orchestrator(
         messages=[{"role": "user", "content": "test"}],
         corpus_slug=slug,
         corpora_config=corpora_config,

@@ -1,9 +1,15 @@
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 import solidPlugin from "vite-plugin-solid";
+import path from "path";
 
 export default defineConfig({
   plugins: [solidPlugin(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
   optimizeDeps: {
     include: ["debug", "extend", "inline-style-parser", "style-to-object"],
   },

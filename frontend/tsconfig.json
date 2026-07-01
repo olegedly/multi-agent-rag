@@ -12,6 +12,9 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "noEmit": true,
+    "paths": {
+      "@/*": ["./src/*"]
+    },
 
     // Type Checking & Safety
     "strict": true,

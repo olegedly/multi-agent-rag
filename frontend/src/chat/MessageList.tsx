@@ -11,6 +11,10 @@ export interface MessageListProps {
   agentNameMap?: Record<string, string>;
   /** Set of message IDs whose TEXT_MESSAGE_END has been received. */
   endedMessageIds?: Set<string>;
+  /** Reactive signal of the ended message IDs set */
+  endedSet: () => Set<string>;
+  /** Reactive signal that ticks when loading transitions to false */
+  stopTick: () => number;
 }
 
 export function MessageList(props: MessageListProps) {
@@ -103,18 +107,18 @@ export function MessageList(props: MessageListProps) {
                 nextToolCallTick={props.nextToolCallTick}
                 isNewToolResult={props.isNewToolResult}
                 agentNameMap={props.agentNameMap}
-
                 endedMessageIds={props.endedMessageIds}
+                endedSet={props.endedSet}
+                stopTick={props.stopTick}
               />
-          </div>
-
+            </div>
           </div>
         )}
       </For>
 
       {/* Error message */}
       <Show when={props.error}>
-        <div class="bg-red-900/30 border border-red-500/50 text-red-300 px-4 py-3 rounded-lg text-sm">
+        <div class="bg-(--danger)/15 border border-(--danger)/40 text-(--danger) px-4 py-3 rounded-lg text-sm">
           {props.error}
         </div>
       </Show>

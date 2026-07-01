@@ -70,7 +70,7 @@ def app(corpora_config, monkeypatch):
     app = create_app(settings=settings, corpora_config=corpora_config)
 
     # Override the pipeline dependency
-    monkeypatch.setattr("backend.main.run_pipeline", _fake_pipeline)
+    monkeypatch.setattr("backend.main.run_orchestrator", _fake_pipeline)
 
     return app
 

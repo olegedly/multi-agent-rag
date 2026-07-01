@@ -25,7 +25,7 @@ from backend.agents.langchain_tools import create_rag_tools
 from backend.agents.stream_handler import StreamEventHandler
 from backend.config import Settings
 from backend.corpus_config import CorporaConfig
-from backend.middleware import JsonFileBudget, TokenBudgetCallback
+from backend.middleware import TokenBudgetCallback
 
 
 # ── Shared state ────────────────────────────────────────────────────────────
@@ -209,12 +209,8 @@ def _build_model(settings: Settings, model: BaseChatModel | None = None) -> Base
     if model is not None:
         return model
 
-    budget_file = None
-    if not settings.demo_disable_budget:
-        budget_file = JsonFileBudget(
-            path=settings.demo_budget_file,
-            daily_limit=settings.demo_daily_budget_tokens,
-        )
+    budget_store = settings.budget_store
+    callbacks = [TokenBudgetCallback(budget_store)] if budget_store else []
 
     return ChatOpenAI(
         model=settings.llm_model,
@@ -222,7 +218,7 @@ def _build_model(settings: Settings, model: BaseChatModel | None = None) -> Base
         openai_api_base=settings.llm_base_url,  # type: ignore[call-arg]
         max_tokens=settings.llm_max_tokens,  # type: ignore[call-arg]
         temperature=0,
-        callbacks=[TokenBudgetCallback(budget_file)] if budget_file else [],
+        callbacks=callbacks,
     )
 
 

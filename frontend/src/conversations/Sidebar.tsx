@@ -1,9 +1,10 @@
-import { For, Show, createSignal, createMemo } from "solid-js";
+import { For, Show, createSignal, createMemo, createEffect, on } from "solid-js";
 import type { Conversation } from "./store";
 
 interface SidebarProps {
   conversations: Conversation[];
   currentId: string;
+  activeCorpusId: string;
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
@@ -13,11 +14,29 @@ interface SidebarProps {
 
 export function Sidebar(props: SidebarProps) {
   const [confirmingId, setConfirmingId] = createSignal<string | null>(null);
+  let listRef: HTMLDivElement | undefined;
+
+  // Auto-scroll to top when a new conversation is created (sorted to top)
+  let prevLen = 0;
+  createEffect(on(
+    () => props.conversations.length,
+    (len) => {
+      if (len > prevLen && listRef?.scrollTo) {
+        listRef.scrollTo({ top: 0, behavior: "smooth" });
+      }
+      prevLen = len;
+    },
+  ));
+
+  // Filter conversations to only those belonging to the active corpus
+  const filtered = createMemo(() =>
+    props.conversations.filter((c) => c.corpusId === props.activeCorpusId),
+  );
 
   const enriched = createMemo(() => {
     const currId = props.currentId;
     const confirmId = confirmingId();
-    return props.conversations.map((conv) => ({
+    return filtered().map((conv) => ({
       conv,
       isCurrent: conv.id === currId,
       isConfirming: confirmId === conv.id,
@@ -61,9 +80,9 @@ export function Sidebar(props: SidebarProps) {
       </div>
 
       {/* List */}
-      <div class="flex-1 overflow-y-auto p-2 space-y-1">
+      <div ref={listRef} class="flex-1 overflow-y-auto p-2 space-y-1">
         <Show
-          when={props.conversations.length > 0}
+          when={enriched().length > 0}
           fallback={
             <p class="text-sm text-(--text-secondary) text-center py-8">
               No conversations
