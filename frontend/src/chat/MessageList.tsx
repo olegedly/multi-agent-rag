@@ -118,7 +118,7 @@ export function MessageList(props: MessageListProps) {
 
       {/* Error message */}
       <Show when={props.error}>
-        <div class="bg-red-900/30 border border-red-500/50 text-red-300 px-4 py-3 rounded-lg text-sm">
+        <div class="bg-(--danger)/15 border border-(--danger)/40 text-(--danger) px-4 py-3 rounded-lg text-sm">
           {props.error}
         </div>
       </Show>
