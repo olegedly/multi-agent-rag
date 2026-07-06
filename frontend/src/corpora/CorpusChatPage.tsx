@@ -21,6 +21,10 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
   // Set of message IDs that have received TEXT_MESSAGE_END
   const [endedMessageIds, setEndedMessageIds] = createSignal<Set<string>>(new Set());
 
+  // Read mode from the conversation store
+  const currentConv = () =>
+    store.conversations().find((c) => c.id === props.convId);
+
   const chat = useChat({
     id: `chat-${props.convId}`,
     initialMessages: store.getCurrentMessages(),
@@ -28,6 +32,9 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
       return fetchServerSentEvents(sseUrl(), {
         fetchClient: resilientFetch,
       });
+    },
+    get forwardedProps() {
+      return { mode: currentConv()?.mode ?? "single" };
     },
     onChunk: (chunk: StreamChunk) => {
       if (
@@ -76,6 +83,11 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
     chat.sendMessage(text);
   };
 
+  // Persist mode change to the conversation store
+  const handleModeChange = (newMode: "single" | "multi") => {
+    store.updateCurrentMode(newMode);
+  };
+
   return (
     <ChatView
       messages={chat.messages}
@@ -88,6 +100,9 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
       onStop={() => chat.stop()}
       onDismissStorageError={() => store.setStorageError(null)}
       focusTick={0}
+      mode={currentConv()?.mode}
+      onModeChange={handleModeChange}
+      canChangeMode={chat.messages().length === 0}
     />
   );
 };

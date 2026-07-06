@@ -4,8 +4,8 @@ import { Sidebar } from "../Sidebar";
 
 function makeConvs(corpusId: string = "corpus-1") {
   return [
-    { id: "1", corpusId, title: "Chat A", createdAt: 200, updatedAt: 200, messages: [] },
-    { id: "2", corpusId, title: "Chat B", createdAt: 100, updatedAt: 100, messages: [] },
+    { id: "1", corpusId, title: "Chat A", createdAt: 200, updatedAt: 200, messages: [], mode: "single" as const },
+    { id: "2", corpusId, title: "Chat B", createdAt: 100, updatedAt: 100, messages: [], mode: "single" as const },
   ];
 }
 
@@ -147,7 +147,7 @@ describe("Sidebar", () => {
   it("filters conversations to only those matching activeCorpusId", () => {
     const conversations = [
       ...makeConvs("corpus-1"),
-      { id: "3", corpusId: "corpus-2", title: "Other Corpus", createdAt: 50, updatedAt: 50, messages: [] },
+      { id: "3", corpusId: "corpus-2", title: "Other Corpus", createdAt: 50, updatedAt: 50, messages: [], mode: "single" as const },
     ];
     render(() => (
       <Sidebar

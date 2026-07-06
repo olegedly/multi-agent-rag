@@ -187,6 +187,7 @@ describe("ConversationStore", () => {
       createdAt: Date.now() - 1000,
       updatedAt: Date.now() - 1000,
       messages: [{ id: "1", role: "user" as const, parts: [{ type: "text" as const, content: "A" }] }],
+      mode: "single",
     };
     const conv2: Conversation = {
       id: id2,
@@ -195,6 +196,7 @@ describe("ConversationStore", () => {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       messages: [],
+      mode: "single",
     };
     freshPersistence.save(conv1);
     freshPersistence.save(conv2);
@@ -230,6 +232,7 @@ describe("localStoragePersistence (integration)", () => {
       createdAt: Date.now() - 1000,
       updatedAt: Date.now() - 1000,
       messages: [{ id: "1", role: "user" as const, parts: [{ type: "text" as const, content: "A" }] }],
+      mode: "single",
     };
     const conv2: Conversation = {
       id: id2,
@@ -238,6 +241,7 @@ describe("localStoragePersistence (integration)", () => {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       messages: [],
+      mode: "single",
     };
     localStorage.setItem(`conversation:${id1}`, JSON.stringify(conv1));
     localStorage.setItem(`conversation:${id2}`, JSON.stringify(conv2));

@@ -11,6 +11,8 @@ export interface Conversation {
   /** Timestamp of the most recent message or creation time if no messages yet. */
   updatedAt: number;
   messages: UIMessage[];
+  /** Mode: single-agent (default) or multi-agent pipeline. */
+  mode: "single" | "multi";
   /** Persisted mapping of messageId → agent name, survives page reload. */
   agentNames?: Record<string, string>;
 }
@@ -90,6 +92,7 @@ function createConversation(corpusId: string): Conversation {
     createdAt: now,
     updatedAt: now,
     messages: [],
+    mode: "single",
     agentNames: {},
   };
 }
@@ -105,6 +108,7 @@ export interface ConversationStore {
   saveCurrentMessages: (messages: UIMessage[], agentNames?: Record<string, string>) => void;
   removeCurrent: () => void;
   updateCurrentTitle: (title: string) => void;
+  updateCurrentMode: (mode: "single" | "multi") => void;
   storageError: () => string | null;
   setStorageError: (err: string | null) => void;
 }
@@ -155,6 +159,16 @@ export function createConversationStore(opts?: {
 
     if (fixedUpdatedAt !== undefined) {
       c = { ...c, updatedAt: fixedUpdatedAt };
+      changed = true;
+    }
+
+    // Legacy: infer mode from agentNames
+    if (!c.mode) {
+      const names = Object.values(c.agentNames ?? {});
+      const hasMultiAgent = names.some((n) =>
+        ["Researcher", "Critic", "Synthesizer"].includes(n)
+      );
+      c = { ...c, mode: hasMultiAgent ? "multi" : "single" };
       changed = true;
     }
 
@@ -309,6 +323,17 @@ export function createConversationStore(opts?: {
       const cur = currentConversation();
       if (!cur) return;
       const updated: Conversation = { ...cur, title };
+      const convs = conversations().map((c) =>
+        c.id === cur.id ? updated : c
+      );
+      p.save(updated);
+      setConversations(convs);
+    },
+
+    updateCurrentMode(mode: "single" | "multi") {
+      const cur = currentConversation();
+      if (!cur) return;
+      const updated: Conversation = { ...cur, mode };
       const convs = conversations().map((c) =>
         c.id === cur.id ? updated : c
       );
