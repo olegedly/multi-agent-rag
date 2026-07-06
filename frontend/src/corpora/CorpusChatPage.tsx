@@ -27,9 +27,13 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
   // dependency that causes full re-renders during streaming (every chunk
   // calls saveCurrentMessages → setConversations), which destroys
   // <For>/<Index> child components and resets collapse/expand state.
-  const initialMode: "single" | "multi" =
+  const convMode: "single" | "multi" =
     (store.conversations().find((c) => c.id === props.convId)?.mode ?? "single") as "single" | "multi";
-  const [localMode, setLocalMode] = createSignal<"single" | "multi">(initialMode);
+  const [localMode, setLocalMode] = createSignal<"single" | "multi">(convMode);
+  // Toggle is hidden once the first message has been sent.
+  const [toggleLocked, setToggleLocked] = createSignal(
+    store.getCurrentMessages().length > 0
+  );
 
   const chat = useChat({
     id: `chat-${props.convId}`,
@@ -89,6 +93,9 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
     const msgs = chat.messages();
     if (msgs.length === 0) store.updateCurrentTitle(generateTitle(text));
     chat.sendMessage(text);
+    // Lock toggle after first message — mode was already captured
+    // by forwardedProps at POST time.
+    setToggleLocked(true);
   };
 
   // Persist mode change to the conversation store AND local signal
@@ -109,7 +116,7 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
       onStop={() => chat.stop()}
       onDismissStorageError={() => store.setStorageError(null)}
       focusTick={0}
-      mode={localMode()}
+      mode={toggleLocked() ? undefined : localMode()}
       onModeChange={handleModeChange}
     />
   );
