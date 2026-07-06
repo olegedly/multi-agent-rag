@@ -1,0 +1,20 @@
+---
+title: "April 28, 1965: Statement on Sending Troops to the Dominican Republic"
+president: Lyndon B. Johnson
+date: 1965-04-28T13:00:00-04:00
+source: https://millercenter.org/the-presidency/presidential-speeches/april-28-1965-statement-sending-troops-dominican-republic
+description: >-
+  President Johnson makes a brief statement about his decision to order American
+  troops to the Dominican Republic to protect American citizens. The video
+  begins after Johnson has already begun talking, and it omits the first
+  sentence of the statement: "I have just concluded a meeting with the leaders
+  of the Congress."
+---
+> President Johnson makes a brief statement about his decision to order American troops to the Dominican Republic to protect American citizens. The video begins after Johnson has already begun talking, and it omits the first sentence of the statement: "I have just concluded a meeting with the leaders of the Congress."
+
+I have just concluded a meeting with the leaders of the Congress. I reported to them on the serious situation in the Dominican Republic. I reported the decisions that this Government considers necessary in this situation in order to protect American lives. 
+The members of the leadership expressed their support of these decisions. The United States Government has been informed by military authorities in the Dominican Republic that American lives are in danger. These authorities are no longer able to guarantee their safety and they have reported that the assistance of military personnel is now needed for that purpose. 
+I have ordered the Secretary of Defense to put the necessary American troops ashore in order to give protection to hundreds of Americans who are still in the Dominican Republic and to escort them safely back to this country. This same assistance will be available to the nationals of other countries, some of whom have already asked for our help. 
+Pursuant to my instructions 400 Marines have already landed. General Wheeler, the Chairman of the Joint Chiefs of Staff, has just reported to me that there have been no incidents. 
+We have appealed repeatedly in recent days for a cease-fire between the contending forces of the Dominican Republic in the interests of all Dominicans and foreigners alike. 
+I repeat this urgent appeal again tonight. The Council of the OAS has been advised of the situation by the Dominican Ambassador and the Council will be kept fully informed.

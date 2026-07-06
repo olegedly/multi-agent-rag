@@ -5,3 +5,10 @@ corpora:
     description: "European Union Artificial Intelligence Act — full regulation text"
     chunker: "markdown-heading"
     documents: "corpora/eu-ai-act/**/*.md"
+
+  - id: "f47ac10b-58cc-4372-a567-0e02b2c3d479"
+    slug: "president-speeches"
+    name: "US Presidential Speeches"
+    description: Presidential speeches from George Washington to the present day, sourced from the Miller Center of Public Affairs
+    chunker: "recursive"
+    documents: "corpora/president-speeches/speeches/*.md"
