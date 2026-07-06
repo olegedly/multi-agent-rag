@@ -21,9 +21,15 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
   // Set of message IDs that have received TEXT_MESSAGE_END
   const [endedMessageIds, setEndedMessageIds] = createSignal<Set<string>>(new Set());
 
-  // Read mode from the conversation store
-  const currentConv = () =>
-    store.conversations().find((c) => c.id === props.convId);
+  // ── Mode state (decoupled from conversations() reactivity) ──────────
+  // Use a local signal so rendering doesn't depend on store.conversations().
+  // Reading store.conversations() in the JSX return creates a reactive
+  // dependency that causes full re-renders during streaming (every chunk
+  // calls saveCurrentMessages → setConversations), which destroys
+  // <For>/<Index> child components and resets collapse/expand state.
+  const initialMode: "single" | "multi" =
+    (store.conversations().find((c) => c.id === props.convId)?.mode ?? "single") as "single" | "multi";
+  const [localMode, setLocalMode] = createSignal<"single" | "multi">(initialMode);
 
   const chat = useChat({
     id: `chat-${props.convId}`,
@@ -33,8 +39,10 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
         fetchClient: resilientFetch,
       });
     },
+    // Getter so TanStack's sync effect tracks the local signal
+    // (which only changes on user toggle, NOT on streaming saves).
     get forwardedProps() {
-      return { mode: currentConv()?.mode ?? "single" };
+      return { mode: localMode() };
     },
     onChunk: (chunk: StreamChunk) => {
       if (
@@ -83,9 +91,10 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
     chat.sendMessage(text);
   };
 
-  // Persist mode change to the conversation store
+  // Persist mode change to the conversation store AND local signal
   const handleModeChange = (newMode: "single" | "multi") => {
     store.updateCurrentMode(newMode);
+    setLocalMode(newMode);
   };
 
   return (
@@ -100,9 +109,8 @@ const ConversationChat: Component<{ convId: string; corpusSlug: string }> = (pro
       onStop={() => chat.stop()}
       onDismissStorageError={() => store.setStorageError(null)}
       focusTick={0}
-      mode={currentConv()?.mode}
+      mode={localMode()}
       onModeChange={handleModeChange}
-      canChangeMode={chat.messages().length === 0}
     />
   );
 };

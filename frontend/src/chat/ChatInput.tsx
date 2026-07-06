@@ -18,7 +18,6 @@ export interface ChatInputProps {
   /** Fired when the user toggles the mode chip */
   onModeChange?: (mode: "single" | "multi") => void;
   /** When false, the toggle chip is hidden (mode is locked). */
-  canChangeMode?: boolean;
 }
 
 function isDesktop(): boolean {
@@ -99,7 +98,7 @@ export function ChatInput(props: ChatInputProps) {
           class="flex-1 resize-none rounded-xl px-4 py-2 text-sm bg-(--bg-chat-input) text-(--text-primary) border border-(--border) focus:outline-none focus:border-(--accent) transition-colors placeholder:text-(--text-secondary) disabled:opacity-50 max-h-45 overflow-y-hidden"
           rows={1}
         />
-        <Show when={props.mode !== undefined && props.canChangeMode && !props.isLoading}>
+        <Show when={props.mode !== undefined && !props.isLoading}>
           <button
             type="button"
             onClick={() =>
