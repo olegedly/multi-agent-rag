@@ -34,19 +34,37 @@ from langchain_core.messages.tool import ToolCallChunk
 class StreamEventHandler:
     """Observe stream chunks and drain AG-UI events.
 
-    Phases
-    ------
-        1. Construct  →  first ``drain()`` yields ``RUN_STARTED``.
-        2. For each ``(chunk, metadata)`` from ``astream``:
-           ``observe(chunk, metadata)`` → ``drain()``.
-        3. After stream exhausts:
-           ``finalize()`` → closes open blocks, yields ``RUN_FINISHED``.
-           Or ``error(message)`` → closes blocks, yields ``RUN_ERROR``.
+    Two-phase ``observe()`` / ``drain()`` pattern decouples chunk processing
+    from event emission for clean testability.
 
-    Only a single text message and a single reasoning block are supported
-    (typical for single ``create_agent()`` pipelines).  Tool calls may be
-    concurrent (tracked independently by id).
-    """
+    Reasoning-content strategies
+    -----------------------------
+    LLM providers stream reasoning tokens in two incompatible ways:
+
+    **A — Cumulative** (DeepSeek R1, some fine-tuned clones)
+        Each chunk carries the *full accumulated reasoning text* from the
+        start of the current reasoning block::
+
+            chunk 1: "Think step 1"
+            chunk 2: "Think step 1...Think step 2..."
+
+        The handler diffs ``raw_n - raw_{n-1}`` via ``startswith`` and emits
+        only the new portion as the delta.
+
+    **B — True delta** (OpenAI o-series, Gemini)
+        Each chunk carries *only new text*::
+
+            chunk 1: "Think step 1"
+            chunk 2: "...Think step 2..."
+
+        The ``startswith`` diff typically fails (non-overlapping), so the
+        handler emits the incoming text as-is — which is already a delta.
+
+    **Cross-block scenario (Pattern A)**
+    When the LLM opens a new reasoning block after a tool result, it may
+    re-iterate prior reasoning.  The accumulated text is **not reset** on
+    block close, so the diff correctly strips old content from the new
+    block's first chunk."""
 
     def __init__(
         self,
@@ -69,8 +87,15 @@ class StreamEventHandler:
         # Track the last known id per index to fill in the gap.
         self._last_tool_call_id_by_index: dict[int, str] = {}
 
-        # Accumulated reasoning content for delta computation
-        # (DeepSeek sends full accumulated text in each chunk)
+        # Last-seen raw reasoning text for the universal startswith diff.
+        # Handles both cumulative (DeepSeek) and delta (OpenAI) patterns:
+        #
+        #   Cumulative:  delta = raw - self._last_reasoning_content  (startswith succeeds)
+        #   Delta:       delta = raw                                (startswith fails → emit as-is)
+        #
+        # Crucially NOT reset on _close_reasoning(): if the model re-iterates
+        # prior reasoning from an earlier block, we need this memory to
+        # subtract the old text from the new block's first chunk.
         self._last_reasoning_content: str = ""
 
         # Step counter for unique STEP_STARTED stepIds per reasoning block
@@ -327,7 +352,13 @@ class StreamEventHandler:
     def _close_reasoning(self) -> None:
         if self._reasoning_open:
             self._reasoning_open = False
-            self._last_reasoning_content = ""
+            # NB: do NOT reset _last_reasoning_content here!
+            #     DeepSeek (and some other models) include prior reasoning
+            #     in subsequent reasoning blocks when they see their own
+            #     previous output in the conversation context.  If we reset
+            #     the accumulated text, the diff against the next block's
+            #     first chunk can't strip the old content, causing each
+            #     reasoning block to grow by the sum of all prior blocks.
             self._current_reasoning_step_id = None
             self._pending.append(
                 ReasoningMessageEndEvent(message_id=self._message_id),
