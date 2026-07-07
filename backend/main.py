@@ -15,7 +15,7 @@ from ag_ui.encoder import EventEncoder
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 
-from backend.agents.graph_orchestrator import run_orchestrator
+from backend.agents.graph_orchestrator import run_orchestrator, run_single_agent
 from backend.config import Settings, get_settings
 from backend.corpus_config import CorporaConfig
 from backend.middleware import ChatGuard
@@ -94,14 +94,19 @@ def create_app(
         thread_id = body.get("threadId", "th-default")
         run_id = body.get("runId", "run-default")
 
+        # Read mode from forwardedProps (TanStack AI SDK) with fallback
+        forwarded = body.get("forwardedProps", {}) or {}
+        mode = forwarded.get("mode", "single")
+
         encoder = EventEncoder()
+        pipeline = run_single_agent if mode == "single" else run_orchestrator
 
         async def _stream():
             try:
-                async for event in run_orchestrator(
+                async for event in pipeline(
                     messages,
-                    slug,
-                    corpora_config=corpora_config,
+                    corpus.id,
+                    corpus.name,
                     settings=settings,
                     thread_id=thread_id,
                     run_id=run_id,

@@ -421,11 +421,15 @@ async def _collect_orchestrator_events(
 
     settings = Settings(demo_disable_budget=True)
 
+    corpus = corpora_config.get(slug)
+    if corpus is None:
+        return []
+
     events: list[object] = []
     async for event in run_orchestrator(
         messages=[{"role": "user", "content": "test query"}],
-        corpus_slug=slug,
-        corpora_config=corpora_config,
+        corpus_id=corpus.id,
+        corpus_name=corpus.name,
         settings=settings,
         thread_id="th-default",
         run_id="run-default",
@@ -433,3 +437,239 @@ async def _collect_orchestrator_events(
     ):
         events.append(event)
     return events
+
+
+# ── Tracer bullet 5: single-agent mode ────────────────────────────────────────
+
+
+async def _collect_single_agent_events(
+    corpus_id: str = "corpus-a-uuid",
+    corpus_name: str = "EU AI Act",
+    model=None,
+) -> list[object]:
+    """Collect single-agent events into a list."""
+    from backend.agents.graph_orchestrator import run_single_agent
+    from backend.config import Settings
+
+    settings = Settings(demo_disable_budget=True)
+
+    events: list[object] = []
+    async for event in run_single_agent(
+        messages=[{"role": "user", "content": "test query"}],
+        corpus_id=corpus_id,
+        corpus_name=corpus_name,
+        settings=settings,
+        thread_id="th-default",
+        run_id="run-default",
+        model=model,
+    ):
+        events.append(event)
+    return events
+
+
+
+@pytest.fixture
+def mock_single_agent_text():
+    """Mock model for single agent: streams text only, no tool calls."""
+    async def _astream_impl(messages, **kwargs):
+        yield AIMessageChunk(content="Hello, ")
+        yield AIMessageChunk(content="world!")
+
+    def _apply(model: AsyncMock):
+        model.astream = _astream_impl
+        model.bind_tools = lambda _tools: model
+
+    yield _apply
+
+
+class TestSingleAgent:
+    """run_single_agent() yields correct AG-UI events."""
+
+    async def test_emits_run_started_first(
+        self,
+        mock_model,
+    ):
+        """First event must be RunStartedEvent."""
+        events = await _collect_single_agent_events(model=mock_model)
+        assert len(events) >= 1
+        assert isinstance(events[0], RunStartedEvent)
+
+
+    async def test_text_content_appears(
+        self,
+        mock_single_agent_text,
+        mock_model,
+    ):
+        """Text content from the model appears in the event stream."""
+        mock_single_agent_text(mock_model)
+        events = await _collect_single_agent_events(model=mock_model)
+        content_parts = [
+            e.delta for e in events if isinstance(e, TextMessageContentEvent)
+        ]
+        combined = "".join(content_parts)
+        assert "Hello, world!" in combined
+
+    async def test_emits_run_finished_last(
+        self,
+        mock_single_agent_text,
+        mock_model,
+    ):
+        """Last event must be a single RunFinishedEvent."""
+        mock_single_agent_text(mock_model)
+        events = await _collect_single_agent_events(model=mock_model)
+        finished = [e for e in events if isinstance(e, RunFinishedEvent)]
+        assert len(finished) == 1
+        assert events[-1] is finished[0]
+
+
+    async def test_single_run_started(
+        self,
+        mock_single_agent_text,
+        mock_model,
+    ):
+        """Only one RUN_STARTED event in the entire stream."""
+        mock_single_agent_text(mock_model)
+        events = await _collect_single_agent_events(model=mock_model)
+        starts = [e for e in events if isinstance(e, RunStartedEvent)]
+        assert len(starts) == 1
+
+
+# ── Tracer bullet 3: tool calls for single agent ─────────────────────────────
+
+
+@pytest.fixture
+def mock_single_agent_tool_call():
+    """Mock model for single agent: does a tool call then text answer."""
+    astream_count: list[int] = [0]
+
+    async def _astream_impl(messages, **kwargs):
+        idx = astream_count[0]
+        astream_count[0] += 1
+        if idx == 0:
+            # First call: tool call chunks
+            yield AIMessageChunk(
+                content="",
+                tool_call_chunks=[
+                    {
+                        "id": "call-1",
+                        "name": "rag_search",
+                        "args": '{"query":',
+                        "index": 0,
+                    },
+                ],
+            )
+            yield AIMessageChunk(
+                content="",
+                tool_call_chunks=[
+                    {"name": None, "args": '"test query"}', "id": None, "index": 0},
+                ],
+            )
+        else:
+            # Second call: answer text
+            yield AIMessageChunk(content="Based on search results")
+
+    def _apply(model: AsyncMock):
+        model.astream = _astream_impl
+        model.bind_tools = lambda _tools: model
+
+    yield _apply
+
+
+class TestSingleAgentToolCalls:
+    """run_single_agent() handles tool calls."""
+
+    async def test_emits_tool_call_events(
+        self,
+        mock_single_agent_tool_call,
+        mock_model,
+    ):
+        """Tool call events appear in the stream."""
+        mock_single_agent_tool_call(mock_model)
+        events = await _collect_single_agent_events(model=mock_model)
+        from ag_ui.core.events import ToolCallStartEvent, ToolCallEndEvent, ToolCallResultEvent
+
+        starts = [e for e in events if isinstance(e, ToolCallStartEvent)]
+        assert len(starts) == 1
+        assert starts[0].tool_call_id == "call-1"
+        assert starts[0].tool_call_name == "rag_search"
+
+        ends = [e for e in events if isinstance(e, ToolCallEndEvent)]
+        assert len(ends) == 1
+
+        results = [e for e in events if isinstance(e, ToolCallResultEvent)]
+        assert len(results) == 1
+
+    async def test_tool_then_text_content(
+        self,
+        mock_single_agent_tool_call,
+        mock_model,
+    ):
+        """Text content appears after tool calls."""
+        mock_single_agent_tool_call(mock_model)
+        events = await _collect_single_agent_events(model=mock_model)
+        content_parts = [
+            e.delta for e in events if isinstance(e, TextMessageContentEvent)
+        ]
+        combined = "".join(content_parts)
+        assert "Based on search results" in combined
+
+    async def test_run_finished_after_tool_calls(
+        self,
+        mock_single_agent_tool_call,
+        mock_model,
+    ):
+        """RunFinishedEvent still emitted after tool calls."""
+        mock_single_agent_tool_call(mock_model)
+        events = await _collect_single_agent_events(model=mock_model)
+        finished = [e for e in events if isinstance(e, RunFinishedEvent)]
+        assert len(finished) == 1
+        assert events[-1] is finished[0]
+
+
+# ── Tracer bullet 4: error handling for single agent ─────────────────────────
+
+
+@pytest.fixture
+def mock_single_agent_crash():
+    """Mock model so the single agent crashes mid-stream."""
+    call_count: list[int] = [0]
+
+    async def _astream_impl(messages, **kwargs):
+        idx = call_count[0]
+        call_count[0] += 1
+        if idx == 0:
+            yield AIMessageChunk(content="Before crash")
+            raise RuntimeError("API failure")
+        yield AIMessageChunk(content="Should not reach")
+
+    def _apply(model: AsyncMock):
+        model.astream = _astream_impl
+        model.bind_tools = lambda _tools: model
+
+    yield _apply
+
+
+class TestSingleAgentErrors:
+    """run_single_agent() handles errors gracefully."""
+
+    async def test_emits_run_error_on_crash(
+        self,
+        mock_single_agent_crash,
+        mock_model,
+    ):
+        """When agent crashes, single agent yields RUN_ERROR."""
+        mock_single_agent_crash(mock_model)
+        events = await _collect_single_agent_events(model=mock_model)
+        errors = [e for e in events if isinstance(e, RunErrorEvent)]
+        assert len(errors) == 1
+
+    async def test_no_run_finished_after_crash(
+        self,
+        mock_single_agent_crash,
+        mock_model,
+    ):
+        """When agent crashes, no RUN_FINISHED event."""
+        mock_single_agent_crash(mock_model)
+        events = await _collect_single_agent_events(model=mock_model)
+        finished = [e for e in events if isinstance(e, RunFinishedEvent)]
+        assert len(finished) == 0

@@ -13,6 +13,11 @@ export interface ChatInputProps {
   onStop: () => void;
   /** Incrementing value that triggers autofocus (e.g. after '+ New') */
   focusTick?: number;
+  /** Current conversation's mode — undefined = no messages sent yet */
+  mode?: "single" | "multi";
+  /** Fired when the user toggles the mode chip */
+  onModeChange?: (mode: "single" | "multi") => void;
+  /** When false, the toggle chip is hidden (mode is locked). */
 }
 
 function isDesktop(): boolean {
@@ -93,6 +98,21 @@ export function ChatInput(props: ChatInputProps) {
           class="flex-1 resize-none rounded-xl px-4 py-2 text-sm bg-(--bg-chat-input) text-(--text-primary) border border-(--border) focus:outline-none focus:border-(--accent) transition-colors placeholder:text-(--text-secondary) disabled:opacity-50 max-h-45 overflow-y-hidden"
           rows={1}
         />
+        <Show when={props.mode !== undefined && !props.isLoading}>
+          <button
+            type="button"
+            onClick={() =>
+              props.onModeChange?.(props.mode === "single" ? "multi" : "single")
+            }
+            class="px-3 py-1.5 text-xs rounded-lg border border-(--border) cursor-pointer whitespace-nowrap"
+            classList={{
+              "bg-(--accent) text-white": props.mode === "multi",
+              "bg-(--bg-chat-input) text-(--text-secondary)": props.mode === "single",
+            }}
+          >
+            {props.mode === "single" ? "Single Agent" : "Multi Agent"}
+          </button>
+        </Show>
         <Show
           when={!props.isLoading}
           fallback={

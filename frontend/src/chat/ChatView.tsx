@@ -17,6 +17,11 @@ interface ChatViewProps {
   onDismissStorageError: () => void;
   /** Incrementing value that causes ChatInput to re-focus */
   focusTick?: number;
+  /** Current conversation's mode — undefined = no messages sent yet */
+  mode?: "single" | "multi";
+  /** Fired when the user toggles the mode chip */
+  /** When false, the toggle chip is hidden (mode is locked). */
+  onModeChange?: (mode: "single" | "multi") => void;
 }
 
 export function ChatView(props: ChatViewProps) {
@@ -80,6 +85,8 @@ export function ChatView(props: ChatViewProps) {
         onSend={props.onSend}
         onStop={props.onStop}
         focusTick={props.focusTick}
+        mode={props.mode}
+        onModeChange={props.onModeChange}
       />
     </div>
   );

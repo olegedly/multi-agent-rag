@@ -24,7 +24,6 @@ from typing_extensions import TypedDict
 from backend.agents.langchain_tools import create_rag_tools
 from backend.agents.stream_handler import StreamEventHandler
 from backend.config import Settings
-from backend.corpus_config import CorporaConfig
 from backend.middleware import TokenBudgetCallback
 
 
@@ -375,8 +374,8 @@ def _is_run_finished(event: Any) -> bool:
 
 async def run_orchestrator(
     messages: list[dict],
-    corpus_slug: str,
-    corpora_config: CorporaConfig,
+    corpus_id: str,
+    corpus_name: str,
     settings: Settings,
     thread_id: str = "th-default",
     run_id: str = "run-default",
@@ -388,10 +387,10 @@ async def run_orchestrator(
     ----------
     messages : list[dict]
         The conversation history from the frontend (OpenAI chat format).
-    corpus_slug : str
-        URL slug for the corpus (e.g. ``"eu-ai-act"``).
-    corpora_config : CorporaConfig
-        Resolves the slug to a corpus UUID and metadata.
+    corpus_id : str
+        UUID of the corpus to search.
+    corpus_name : str
+        Human-readable corpus name for system prompts.
     settings : Settings
         App settings for LLM config.
     thread_id : str
@@ -407,10 +406,7 @@ async def run_orchestrator(
         RunStartedEvent, TextMessageStartEvent/ContentEvent/EndEvent,
         TextMessageEndEvent, RunFinishedEvent, or RunErrorEvent.
     """
-    corpus = corpora_config.get(corpus_slug)
-    if corpus is None:
-        return
-
+    # corpus_id and corpus_name are passed directly from the caller
     model_instance = _build_model(settings, model)
     lc_messages = _convert_dict_messages(messages)
 
@@ -474,8 +470,8 @@ async def run_orchestrator(
             async for _state in graph.astream(
                 {
                     "messages": lc_messages,
-                    "corpus_id": corpus.id,
-                    "corpus_name": corpus.name,
+                    "corpus_id": corpus_id,
+                    "corpus_name": corpus_name,
                     "researcher_output": None,
                     "critic_output": None,
                     "_error": None,
@@ -510,6 +506,159 @@ async def run_orchestrator(
 
     if has_error:
         return  # handler.error() already emitted RunErrorEvent on the queue
+
+    yield _run_finished_event(thread_id, run_id)
+
+
+
+# ── Single-agent mode ────────────────────────────────────────────────────────
+
+
+SINGLE_AGENT_SYSTEM_PROMPT = """\
+You are an AI assistant with access to a knowledge base \
+(corpus "{corpus_name}"). Use the available tools to search the knowledge base \
+and answer the user's question. Cite your sources naturally — never construct \
+URLs or hyperlink markdown."""
+
+
+async def run_single_agent(
+    messages: list[dict],
+    corpus_id: str,
+    corpus_name: str,
+    settings: Settings,
+    thread_id: str = "th-default",
+    run_id: str = "run-default",
+    model: BaseChatModel | None = None,
+):
+    """Run a single agent with search tools. Yields AG-UI protocol events.
+
+    Parameters
+    ----------
+    messages : list[dict]
+        The conversation history from the frontend (OpenAI chat format).
+    corpus_id : str
+        UUID of the corpus to search.
+    corpus_name : str
+        Human-readable corpus name for system prompts.
+    settings : Settings
+        App settings for LLM config.
+    thread_id : str
+        Thread identifier from the frontend.
+    run_id : str
+        Run identifier from the frontend.
+    model : BaseChatModel, optional
+        Pre-configured model instance.
+
+    Yields
+    ------
+    Pydantic AG-UI event models (serializable via ``EventEncoder.encode``):
+        RunStartedEvent, TextMessageStartEvent/ContentEvent/EndEvent,
+        TextMessageEndEvent, RunFinishedEvent, or RunErrorEvent.
+    """
+    import json
+
+    from langchain_core.messages import SystemMessage
+
+    from backend.agents.langchain_tools import create_rag_tools
+    from backend.agents.stream_handler import StreamEventHandler
+
+    model_instance = _build_model(settings, model)
+    lc_messages = _convert_dict_messages(messages)
+
+    tools = create_rag_tools(corpus_id=corpus_id)
+    system_prompt = SINGLE_AGENT_SYSTEM_PROMPT.format(corpus_name=corpus_name)
+
+    handler = StreamEventHandler(
+        thread_id=thread_id,
+        run_id=run_id,
+        message_id=str(uuid4()),
+        agent_name=None,  # no name → frontend shows "Assistant"
+        suppress_run_started=True,  # we yield RUN_STARTED manually
+    )
+
+    # ── Emit RUN_STARTED ──────────────────────────────────────────────────
+    yield _run_started_event(thread_id, run_id)
+
+    # ── Build the full message list with system prompt ────────────────────
+    all_messages: list[BaseMessage] = [SystemMessage(content=system_prompt)]
+    all_messages.extend(lc_messages)
+
+    # Bind tools to the model
+    from langchain_core.language_models.chat_models import BaseChatModel as _LCM
+
+    bound_model: _LCM = model_instance.bind_tools(tools) if tools else model_instance  # type: ignore[attr-defined]
+
+    MAX_ITERATIONS = 6
+    error_text: str | None = None
+
+    try:
+        for _iteration in range(MAX_ITERATIONS):
+            # ── Stream model output ────────────────────────────────────
+            accumulated: AIMessageChunk | None = None
+            async for chunk in bound_model.astream(  # type: ignore[attr-defined]
+                all_messages,
+            ):
+                if isinstance(chunk, BaseMessage):
+                    handler.observe(chunk, {"langgraph_node": "agent"})
+                    accumulated = (
+                        chunk if accumulated is None else accumulated + chunk  # type: ignore[operator]
+                    )
+                for event in handler.drain():
+                    yield event
+
+            # The accumulated message carries the same tool call IDs that
+            # were streamed to the frontend.
+            result: BaseMessage = accumulated if accumulated is not None else AIMessage(content="")
+            all_messages.append(result)
+
+            tool_calls = getattr(result, "tool_calls", [])
+            if not tool_calls:
+                break  # Final answer — no more tools to call
+
+            # ── Execute each tool and feed results back ────────────────
+            for tc in tool_calls:
+                tool_name: str = tc.get("name", "")  # type: ignore[union-attr]
+                tool_args: dict = tc.get("args", {})  # type: ignore[union-attr]
+                tool_call_id: str = tc.get("id", "")  # type: ignore[union-attr]
+
+                matched_tool = next(
+                    (t for t in tools if t.name == tool_name), None
+                )
+                if matched_tool is not None:
+                    try:
+                        tool_result = await matched_tool.ainvoke(tool_args)
+                        if isinstance(tool_result, str):
+                            result_content = tool_result
+                        else:
+                            result_content = json.dumps(tool_result)
+                    except Exception as exc:
+                        result_content = json.dumps({"error": str(exc)})
+                else:
+                    result_content = json.dumps({"error": f"Unknown tool: {tool_name}"})
+
+                tool_msg = ToolMessage(
+                    content=result_content, tool_call_id=tool_call_id
+                )
+                all_messages.append(tool_msg)
+
+                # Emit tool result — closes the current reasoning block
+                handler.observe(tool_msg, {"langgraph_node": "tools"})
+                for event in handler.drain():
+                    yield event
+
+        # ── Close any open blocks ─────────────────────────────────────
+        for event in handler.finalize():
+            if not _is_run_finished(event):
+                yield event
+
+    except Exception as exc:
+        error_text = str(exc)
+        for event in handler.error(error_text):
+            yield event
+        return
+
+    if error_text:
+        return
 
     yield _run_finished_event(thread_id, run_id)
 

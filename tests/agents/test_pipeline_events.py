@@ -544,11 +544,15 @@ async def collect_pipeline_events(
 
     settings = Settings(demo_disable_budget=True)  # no /data/ needed
 
+    corpus = corpora_config.get(slug)
+    if corpus is None:
+        return []
+
     events: list[object] = []
     async for event in run_orchestrator(
         messages=[{"role": "user", "content": "test"}],
-        corpus_slug=slug,
-        corpora_config=corpora_config,
+        corpus_id=corpus.id,
+        corpus_name=corpus.name,
         settings=settings,
         thread_id="th-default",
         run_id="run-default",

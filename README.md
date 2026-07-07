@@ -1,7 +1,7 @@
 # Multi-Agent RAG
 
 > **Live demo:** [multi-agent-rag.olegedly.com](https://multi-agent-rag.olegedly.com/)
-A config-driven multi-agent research system with pgvector RAG, MCP tool servers, and a LangChain agent pipeline. Answers are grounded in curated knowledge bases (corpora), each scoped to a single corpus with route-based isolation.
+A config-driven multi-agent research system grounded in curated knowledge bases. Three specialist AI agents (Researcher → Critic → Synthesizer) collaborate via a LangGraph pipeline to answer questions — cited, grounded, and streamed live to a SolidJS dashboard. Powered by pgvector RAG, with a standalone MCP server for IDE integration.
 
 ## Quick Start
 
