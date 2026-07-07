@@ -357,8 +357,13 @@ class TestReasoning:
         assert len(content_events3) == 1
         assert content_events3[0].delta == "Let me read..."
 
-    def test_accumulated_reasoning_resets_on_close(self, handler):
-        """After reasoning closes, the accumulated text resets for the next block."""
+    def test_cross_block_non_overlapping_delta(self, handler):
+        """Non-overlapping cross-block reasoning emits full new text.
+
+        When the new reasoning block does NOT reiterate prior text
+        (Pattern B — OpenAI o-series, Gemini), the startswith diff
+        fails and the handler emits the incoming text as-is.
+        """
         chunk1 = AIMessageChunk(
             content="",
             additional_kwargs={"reasoning_content": "First thought"},
@@ -371,7 +376,7 @@ class TestReasoning:
         handler.observe(chunk2, {"langgraph_node": "agent"})
         handler.drain()
 
-        # Start new reasoning block — should reset accumulated text
+        # New reasoning block with completely different content
         chunk3 = AIMessageChunk(
             content="",
             additional_kwargs={"reasoning_content": "Second thought"},
@@ -645,3 +650,117 @@ class TestError:
         ends = [e for e in events if isinstance(e, TextMessageEndEvent)]
         assert len(ends) == 1
         assert isinstance(events[-1], RunErrorEvent)
+
+
+# ── Regression: cross-block accumulation (DeepSeek style) ────────────────
+
+
+class TestCrossBlockAccumulation:
+    """When DeepSeek re-iterates prior reasoning across tool-call boundaries.
+
+    The handler must NOT reset ``_last_reasoning_content`` on block close,
+    otherwise the diff on the next block's first chunk emits old content as
+    a delta, producing ever-growing reasoning blocks::
+
+        Block 1: "foo"                → delta "foo"       ✓
+        Tool result → close reasoning
+        Block 2: "foo bar"             → delta " bar"     ✓  (was: "foo bar" ❌)
+        Tool result → close reasoning
+        Block 3: "foo bar baz"         → delta " baz"     ✓  (was: "foo bar baz" ❌)
+    """
+
+    @pytest.fixture
+    def handler(self):
+        h = StreamEventHandler(
+            thread_id="th-1", run_id="run-1", message_id="msg-1",
+        )
+        h.drain()  # discard RUN_STARTED
+        return h
+
+    def test_cross_block_accumulated_delta_strips_old_content(self, handler):
+        """Block 2 with repeated prefix emits only the new portion."""
+        # Block 1: "foo"
+        handler.observe(
+            AIMessageChunk(content="", additional_kwargs={"reasoning_content": "foo"}),
+            {"langgraph_node": "agent"},
+        )
+        handler.drain()
+
+        # Close reasoning via tool result
+        handler.observe(
+            AIMessageChunk(content="", tool_call_chunks=[{"id": "c1", "name": "t", "args": "{}", "index": 0}]),
+            {"langgraph_node": "agent"},
+        )
+        handler.drain()
+        handler.observe(ToolMessage(content="ok", tool_call_id="c1"), {"langgraph_node": "tools"})
+        handler.drain()
+
+        # Block 2: DeepSeek re-iterates "foo" + adds " bar"
+        handler.observe(
+            AIMessageChunk(content="", additional_kwargs={"reasoning_content": "foo bar"}),
+            {"langgraph_node": "agent"},
+        )
+        events = handler.drain()
+        content_events = [e for e in events if isinstance(e, ReasoningMessageContentEvent)]
+        assert len(content_events) == 1
+        assert content_events[0].delta == " bar", (
+            f"Expected delta ' bar', got {content_events[0].delta!r}"
+        )
+
+    def test_cross_block_three_blocks(self, handler):
+        """Three blocks: each emits only the new portion."""
+        def _block(text: str) -> None:
+            handler.observe(
+                AIMessageChunk(content="", additional_kwargs={"reasoning_content": text}),
+                {"langgraph_node": "agent"},
+            )
+            handler.drain()
+            # Close via tool result
+            handler.observe(
+                AIMessageChunk(content="", tool_call_chunks=[{"id": "c1", "name": "t", "args": "{}", "index": 0}]),
+                {"langgraph_node": "agent"},
+            )
+            handler.drain()
+            handler.observe(ToolMessage(content="ok", tool_call_id="c1"), {"langgraph_node": "tools"})
+            handler.drain()
+
+        _block("foo")
+        _block("foo bar")
+        _block("foo bar baz")
+
+        # Fourth block: verify the chain stops growing
+        handler.observe(
+            AIMessageChunk(content="", additional_kwargs={"reasoning_content": "foo bar baz qux"}),
+            {"langgraph_node": "agent"},
+        )
+        events = handler.drain()
+        content_events = [e for e in events if isinstance(e, ReasoningMessageContentEvent)]
+        assert len(content_events) == 1
+        assert content_events[0].delta == " qux"
+
+    def test_cross_block_delta_style_still_works(self, handler):
+        """OpenAI-style non-overlapping deltas still work across blocks."""
+        handler.observe(
+            AIMessageChunk(content="", additional_kwargs={"reasoning_content": "First block"}),
+            {"langgraph_node": "agent"},
+        )
+        handler.drain()
+
+        # Close via tool result
+        handler.observe(
+            AIMessageChunk(content="", tool_call_chunks=[{"id": "c1", "name": "t", "args": "{}", "index": 0}]),
+            {"langgraph_node": "agent"},
+        )
+        handler.drain()
+        handler.observe(ToolMessage(content="ok", tool_call_id="c1"), {"langgraph_node": "tools"})
+        handler.drain()
+
+        # New block with completely different content (delta style)
+        handler.observe(
+            AIMessageChunk(content="", additional_kwargs={"reasoning_content": "Second block"}),
+            {"langgraph_node": "agent"},
+        )
+        events = handler.drain()
+        content_events = [e for e in events if isinstance(e, ReasoningMessageContentEvent)]
+        assert len(content_events) == 1
+        assert content_events[0].delta == "Second block"
