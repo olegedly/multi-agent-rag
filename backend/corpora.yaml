@@ -9,6 +9,13 @@ corpora:
   - id: "f47ac10b-58cc-4372-a567-0e02b2c3d479"
     slug: "president-speeches"
     name: "US Presidential Speeches"
-    description: Presidential speeches from George Washington to the present day, sourced from the Miller Center of Public Affairs
+    description: "Presidential speeches from George Washington to the present day, sourced from the Miller Center of Public Affairs"
     chunker: "recursive"
     documents: "corpora/president-speeches/speeches/*.md"
+
+  - id: "c9ec81b4-e412-4b73-90bf-c986f5335ffb"
+    slug: "meditations"
+    name: "Meditations by Marcus Aurelius"
+    description: "A timeless manual on Stoic philosophy, written as a series of personal reflections by a Roman emperor on how to live a virtuous, rational, and tranquil life amidst chaos and adversity"
+    chunker: "markdown-heading"
+    documents: "corpora/meditations/book-*.md"
